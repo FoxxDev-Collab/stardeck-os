@@ -13,6 +13,7 @@ import (
 
 	"stardeckos-backend/internal/api"
 	"stardeckos-backend/internal/auth"
+	"stardeckos-backend/internal/certs"
 	"stardeckos-backend/internal/database"
 	"stardeckos-backend/internal/models"
 )
@@ -56,9 +57,13 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:     []string{"http://localhost:3000"},
-		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch},
-		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-CSRF-Token"},
+		AllowOriginFunc: func(origin string) (bool, error) {
+			// Allow all origins in development
+			// TODO: Restrict this in production
+			return true, nil
+		},
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions},
+		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-CSRF-Token", "Upgrade", "Connection", "Sec-WebSocket-Key", "Sec-WebSocket-Version"},
 		AllowCredentials: true,
 	}))
 
@@ -75,11 +80,31 @@ func main() {
 	// Get port from environment or default
 	port := os.Getenv("STARDECK_PORT")
 	if port == "" {
-		port = "8080"
+		port = "443"
 	}
 
-	log.Printf("Starting Stardeck backend on port %s", port)
-	e.Logger.Fatal(e.Start(":" + port))
+	// Get cert directory (next to database or from env)
+	certDir := os.Getenv("STARDECK_CERT_DIR")
+	if certDir == "" {
+		certDir = filepath.Join(filepath.Dir(dbPath), "certs")
+	}
+
+	// Check if we should use HTTP (for development)
+	useHTTP := os.Getenv("STARDECK_USE_HTTP") == "true"
+
+	if useHTTP {
+		log.Printf("Starting Stardeck backend on HTTP port %s (insecure mode)", port)
+		e.Logger.Fatal(e.Start(":" + port))
+	} else {
+		// Ensure TLS certificates exist
+		certPath, keyPath, err := certs.EnsureCertificates(certDir)
+		if err != nil {
+			log.Fatalf("Failed to setup TLS certificates: %v", err)
+		}
+		log.Printf("Using TLS certificates from %s", certDir)
+		log.Printf("Starting Stardeck backend on HTTPS port %s", port)
+		e.Logger.Fatal(e.StartTLS(":"+port, certPath, keyPath))
+	}
 }
 
 // createDefaultAdminIfNeeded creates a default admin user if no users exist

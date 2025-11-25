@@ -330,6 +330,7 @@ type Repository struct {
 	GPGCheck    bool   `json:"gpgcheck"`
 	GPGKey      string `json:"gpgkey,omitempty"`
 	Description string `json:"description,omitempty"`
+	SourceFile  string `json:"source_file,omitempty"` // The .repo file this came from
 }
 
 // PackageSearchResult represents a package from search results
@@ -401,9 +402,10 @@ func parseRepoFile(filePath string) ([]Repository, error) {
 			}
 			repoID := strings.Trim(line, "[]")
 			currentRepo = &Repository{
-				ID:       repoID,
-				Enabled:  true, // Default
-				GPGCheck: true, // Default
+				ID:         repoID,
+				Enabled:    true, // Default
+				GPGCheck:   true, // Default
+				SourceFile: filePath,
 			}
 			continue
 		}
@@ -488,17 +490,91 @@ func EditRepository(repo Repository) error {
 		return fmt.Errorf("repository ID is required")
 	}
 
-	// Find the file containing this repo
-	repoPath := filepath.Join("/etc/yum.repos.d", repo.ID+".repo")
+	// Find the source file for this repository
+	var sourceFile string
+	if repo.SourceFile != "" {
+		sourceFile = repo.SourceFile
+	} else {
+		// Try to find it by searching all repos
+		allRepos, err := GetRepositories()
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, r := range allRepos {
+			if r.ID == repo.ID {
+				sourceFile = r.SourceFile
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Fall back to single-file repo
+			sourceFile = filepath.Join("/etc/yum.repos.d", repo.ID+".repo")
+		}
+	}
 
 	// Check if file exists
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+	if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
 		return fmt.Errorf("repository %s not found", repo.ID)
 	}
 
-	// Update repo file
-	content := formatRepoFile(repo)
-	err := os.WriteFile(repoPath, []byte(content), 0644)
+	// Read the current file content
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to read repo file: %w", err)
+	}
+
+	// Parse all repositories in the file
+	repos, err := parseRepoFile(sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to parse repo file: %w", err)
+	}
+
+	// Update the specific repository
+	found := false
+	for i := range repos {
+		if repos[i].ID == repo.ID {
+			// Preserve the source file
+			repo.SourceFile = sourceFile
+			repos[i] = repo
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("repository %s not found in file %s", repo.ID, sourceFile)
+	}
+
+	// Regenerate the file with all repositories
+	var newContent strings.Builder
+
+	// Preserve any header comments from the original file
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Only preserve leading comments (before first [section])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			newContent.WriteString(line + "\n")
+		} else if strings.HasPrefix(trimmed, "[") {
+			// Stop at first section
+			break
+		} else {
+			newContent.WriteString(line + "\n")
+		}
+	}
+
+	// Write all repositories
+	for i, r := range repos {
+		if i > 0 {
+			newContent.WriteString("\n")
+		}
+		newContent.WriteString(formatRepoFile(r))
+	}
+
+	// Write the file
+	err = os.WriteFile(sourceFile, []byte(newContent.String()), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to update repo file: %w", err)
 	}
@@ -512,16 +588,90 @@ func DeleteRepository(repoID string) error {
 		return fmt.Errorf("repository ID is required")
 	}
 
-	repoPath := filepath.Join("/etc/yum.repos.d", repoID+".repo")
+	// Find the source file for this repository
+	allRepos, err := GetRepositories()
+	if err != nil {
+		return err
+	}
 
-	// Check if file exists
-	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+	var sourceFile string
+	var found bool
+	for _, r := range allRepos {
+		if r.ID == repoID {
+			sourceFile = r.SourceFile
+			found = true
+			break
+		}
+	}
+
+	if !found {
 		return fmt.Errorf("repository %s not found", repoID)
 	}
 
-	err := os.Remove(repoPath)
+	// Check if file exists
+	if _, err := os.Stat(sourceFile); os.IsNotExist(err) {
+		return fmt.Errorf("repository file %s not found", sourceFile)
+	}
+
+	// Parse all repositories in the file
+	repos, err := parseRepoFile(sourceFile)
 	if err != nil {
-		return fmt.Errorf("failed to delete repo file: %w", err)
+		return fmt.Errorf("failed to parse repo file: %w", err)
+	}
+
+	// Remove the specific repository
+	var remainingRepos []Repository
+	for _, r := range repos {
+		if r.ID != repoID {
+			remainingRepos = append(remainingRepos, r)
+		}
+	}
+
+	// If no repositories remain, delete the file
+	if len(remainingRepos) == 0 {
+		err := os.Remove(sourceFile)
+		if err != nil {
+			return fmt.Errorf("failed to delete repo file: %w", err)
+		}
+		return nil
+	}
+
+	// Otherwise, rewrite the file with remaining repositories
+	// Read original content to preserve header comments
+	content, err := os.ReadFile(sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to read repo file: %w", err)
+	}
+
+	var newContent strings.Builder
+
+	// Preserve any header comments from the original file
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Only preserve leading comments (before first [section])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			newContent.WriteString(line + "\n")
+		} else if strings.HasPrefix(trimmed, "[") {
+			// Stop at first section
+			break
+		} else {
+			newContent.WriteString(line + "\n")
+		}
+	}
+
+	// Write remaining repositories
+	for i, r := range remainingRepos {
+		if i > 0 {
+			newContent.WriteString("\n")
+		}
+		newContent.WriteString(formatRepoFile(r))
+	}
+
+	// Write the file
+	err = os.WriteFile(sourceFile, []byte(newContent.String()), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to update repo file: %w", err)
 	}
 
 	return nil

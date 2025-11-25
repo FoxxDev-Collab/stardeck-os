@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import "@xterm/xterm/css/xterm.css";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -45,14 +46,6 @@ export default function TerminalPage() {
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
       ]);
-
-      // Load xterm CSS dynamically
-      if (!document.querySelector('link[href*="xterm.css"]')) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.3.0/css/xterm.css";
-        document.head.appendChild(link);
-      }
 
       // Initialize xterm.js
       term = new Terminal({
@@ -109,15 +102,19 @@ export default function TerminalPage() {
       }, 10);
 
       // Get auth token from localStorage
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("stardeck-token");
       if (!token) {
         term.writeln("\r\n\x1b[1;31mNo authentication token found\x1b[0m\r\n");
         return;
       }
 
       // Connect to WebSocket with auth token
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.hostname}:8080/api/terminal/ws?token=${encodeURIComponent(token)}`;
+      // In development, Next.js runs on :3000 but backend is on :443 (HTTPS)
+      // In production, everything is served from the same port
+      const isDevMode = window.location.port === "3000";
+      const wsProtocol = isDevMode ? "wss:" : (window.location.protocol === "https:" ? "wss:" : "ws:");
+      const wsHost = isDevMode ? `${window.location.hostname}:443` : window.location.host;
+      const wsUrl = `${wsProtocol}//${wsHost}/api/terminal/ws?token=${encodeURIComponent(token)}`;
 
       console.log("Connecting to WebSocket:", wsUrl.replace(token, "***"));
       ws = new WebSocket(wsUrl);
@@ -125,7 +122,6 @@ export default function TerminalPage() {
 
       ws.onopen = () => {
         setIsConnected(true);
-        term?.writeln("Connected to terminal...\r\n");
 
         // Send initial size
         if (term) {

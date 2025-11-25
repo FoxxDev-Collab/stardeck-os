@@ -3,16 +3,12 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: 'export',
 
-  // Dev mode: proxy API to Go backend
+  // Dev mode: proxy API to Go backend (HTTPS on port 443)
   async rewrites() {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8080/api/:path*',
-      },
-      {
-        source: '/ws/:path*',
-        destination: 'http://localhost:8080/ws/:path*',
+        destination: 'https://localhost:443/api/:path*',
       },
     ]
   },
