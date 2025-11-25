@@ -22,6 +22,7 @@ import {
   UserCog,
   Globe,
   Server,
+  Container,
 } from "lucide-react";
 
 interface NavItem {
@@ -52,6 +53,7 @@ const navSections: NavSection[] = [
       { name: "Process Manager", href: "/process-manager", icon: ListChecks },
       { name: "Service Manager", href: "/service-manager", icon: Settings },
       { name: "RPM Manager", href: "/rpm-manager", icon: Package },
+      { name: "Container Manager", href: "/container-manager", icon: Container },
       { name: "Storage Viewer", href: "/storage-viewer", icon: HardDrive },
       { name: "File Browser", href: "/file-browser", icon: FolderOpen },
     ],

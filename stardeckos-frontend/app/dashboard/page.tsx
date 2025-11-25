@@ -16,6 +16,7 @@ import {
   FolderOpen,
   UserCog,
   Globe,
+  Container,
 } from "lucide-react";
 
 interface DesktopApp {
@@ -60,6 +61,14 @@ const desktopApps: DesktopApp[] = [
     href: "/rpm-manager",
     description: "Manage packages, updates, and repositories",
     color: "text-chart-1",
+  },
+  {
+    id: "container-manager",
+    icon: <Container className="w-8 h-8" />,
+    label: "Container Manager",
+    href: "/container-manager",
+    description: "Deploy and manage Podman containers",
+    color: "text-chart-4",
   },
   {
     id: "storage-viewer",
