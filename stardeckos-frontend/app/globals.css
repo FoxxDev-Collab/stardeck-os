@@ -1,0 +1,312 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'NK57 Monospace', 'IBM Plex Mono', 'Roboto Mono', monospace;
+  --font-mono: 'NK57 Monospace', 'IBM Plex Mono', 'Consolas', monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-serif: 'NK57 Monospace', 'Courier Prime', monospace;
+  --radius: 4px;
+  --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+  --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+  --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+  --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+  --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+  --tracking-normal: var(--tracking-normal);
+  --shadow-2xl: var(--shadow-2xl);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-md: var(--shadow-md);
+  --shadow: var(--shadow);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-2xs: var(--shadow-2xs);
+  --spacing: var(--spacing);
+  --letter-spacing: var(--letter-spacing);
+  --shadow-offset-y: var(--shadow-offset-y);
+  --shadow-offset-x: var(--shadow-offset-x);
+  --shadow-spread: var(--shadow-spread);
+  --shadow-blur: var(--shadow-blur);
+  --shadow-opacity: var(--shadow-opacity);
+  --color-shadow-color: var(--shadow-color);
+  --color-destructive-foreground: var(--destructive-foreground);
+}
+
+:root {
+  --radius: 4px;
+  --background: oklch(0.9791 0 0);
+  --foreground: oklch(0.2520 0 0);
+  --card: oklch(0.9491 0 0);
+  --card-foreground: oklch(0.2520 0 0);
+  --popover: oklch(0.9702 0 0);
+  --popover-foreground: oklch(0.2520 0 0);
+  --primary: oklch(0.3485 0 0);
+  --primary-foreground: oklch(0.9791 0 0);
+  --secondary: oklch(0.8792 0 0);
+  --secondary-foreground: oklch(0.2520 0 0);
+  --muted: oklch(0.9006 0 0);
+  --muted-foreground: oklch(0.4997 0 0);
+  --accent: oklch(0.7889 0.1105 196.6173);
+  --accent-foreground: oklch(0.1496 0 0);
+  --destructive: oklch(0.5502 0.2200 25.0385);
+  --border: oklch(0.7508 0 0);
+  --input: oklch(0.9189 0 0);
+  --ring: oklch(0.4495 0 0);
+  --chart-1: oklch(0.5502 0.2200 25.0385);
+  --chart-2: oklch(0.6500 0.1799 44.9848);
+  --chart-3: oklch(0.7008 0.1500 65.0820);
+  --chart-4: oklch(0.4162 0.0834 258.8898);
+  --chart-5: oklch(0.3344 0.0781 357.0259);
+  --sidebar: oklch(0.9612 0 0);
+  --sidebar-foreground: oklch(0.2520 0 0);
+  --sidebar-primary: oklch(0.3485 0 0);
+  --sidebar-primary-foreground: oklch(0.9791 0 0);
+  --sidebar-accent: oklch(0.8792 0 0);
+  --sidebar-accent-foreground: oklch(0.2520 0 0);
+  --sidebar-border: oklch(0.8015 0 0);
+  --sidebar-ring: oklch(0.4495 0 0);
+  --destructive-foreground: oklch(0.9791 0 0);
+  --font-sans: 'NK57 Monospace', 'IBM Plex Mono', 'Roboto Mono', monospace;
+  --font-serif: 'NK57 Monospace', 'Courier Prime', monospace;
+  --font-mono: 'NK57 Monospace', 'IBM Plex Mono', 'Consolas', monospace;
+  --shadow-color: #000000;
+  --shadow-opacity: 0.1;
+  --shadow-blur: 8px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 4px;
+  --shadow-offset-y: 4px;
+  --letter-spacing: 0em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 4px 4px 8px 0px hsl(0 0% 0% / 0.05);
+  --shadow-xs: 4px 4px 8px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 4px 4px 8px 0px hsl(0 0% 0% / 0.10), 4px 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow: 4px 4px 8px 0px hsl(0 0% 0% / 0.10), 4px 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow-md: 4px 4px 8px 0px hsl(0 0% 0% / 0.10), 4px 2px 4px -1px hsl(0 0% 0% / 0.10);
+  --shadow-lg: 4px 4px 8px 0px hsl(0 0% 0% / 0.10), 4px 4px 6px -1px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 4px 4px 8px 0px hsl(0 0% 0% / 0.10), 4px 8px 10px -1px hsl(0 0% 0% / 0.10);
+  --shadow-2xl: 4px 4px 8px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
+}
+
+.dark {
+  --background: oklch(0.1562 0.0737 262.2608);
+  --foreground: oklch(0.9189 0 0);
+  --card: oklch(0.2043 0.0748 257.7245);
+  --card-foreground: oklch(0.9189 0 0);
+  --popover: oklch(0.1860 0.0743 259.6062);
+  --popover-foreground: oklch(0.9189 0 0);
+  --primary: oklch(0.7008 0.1500 65.0820);
+  --primary-foreground: oklch(0.1290 0.0714 263.7567);
+  --secondary: oklch(0.2789 0.0604 250.1911);
+  --secondary-foreground: oklch(0.8514 0 0);
+  --muted: oklch(0.2505 0.0600 249.3525);
+  --muted-foreground: oklch(0.5486 0 0);
+  --accent: oklch(0.7000 0.1190 200.4390);
+  --accent-foreground: oklch(0.1290 0.0714 263.7567);
+  --destructive: oklch(0.5494 0.1993 25.1156);
+  --border: oklch(0.4058 0.0690 201.7781);
+  --input: oklch(0.2226 0.0753 255.7444);
+  --ring: oklch(0.7008 0.1500 65.0820);
+  --chart-1: oklch(0.5502 0.2200 25.0385);
+  --chart-2: oklch(0.6500 0.1799 44.9848);
+  --chart-3: oklch(0.7008 0.1500 65.0820);
+  --chart-4: oklch(0.4162 0.0834 258.8898);
+  --chart-5: oklch(0.4999 0.1491 319.8605);
+  --sidebar: oklch(0.1290 0.0714 263.7567);
+  --sidebar-foreground: oklch(0.9189 0 0);
+  --sidebar-primary: oklch(0.7008 0.1500 65.0820);
+  --sidebar-primary-foreground: oklch(0.1290 0.0714 263.7567);
+  --sidebar-accent: oklch(0.2789 0.0604 250.1911);
+  --sidebar-accent-foreground: oklch(0.8514 0 0);
+  --sidebar-border: oklch(0.3591 0.0611 202.9376);
+  --sidebar-ring: oklch(0.7008 0.1500 65.0820);
+  --destructive-foreground: oklch(0.9491 0 0);
+  --radius: 4px;
+  --font-sans: 'NK57 Monospace', 'IBM Plex Mono', 'Roboto Mono', monospace;
+  --font-serif: 'NK57 Monospace', 'Courier Prime', monospace;
+  --font-mono: 'NK57 Monospace', 'IBM Plex Mono', 'Consolas', monospace;
+  --shadow-color: #000018;
+  --shadow-opacity: 0.4;
+  --shadow-blur: 16px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 4px;
+  --shadow-offset-y: 4px;
+  --letter-spacing: 0em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.20);
+  --shadow-xs: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.20);
+  --shadow-sm: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.40), 4px 1px 2px -1px hsl(240 100% 4.7059% / 0.40);
+  --shadow: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.40), 4px 1px 2px -1px hsl(240 100% 4.7059% / 0.40);
+  --shadow-md: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.40), 4px 2px 4px -1px hsl(240 100% 4.7059% / 0.40);
+  --shadow-lg: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.40), 4px 4px 6px -1px hsl(240 100% 4.7059% / 0.40);
+  --shadow-xl: 4px 4px 16px 0px hsl(240 100% 4.7059% / 0.40), 4px 8px 10px -1px hsl(240 100% 4.7059% / 0.40);
+  --shadow-2xl: 4px 4px 16px 0px hsl(240 100% 4.7059% / 1.00);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    letter-spacing: var(--tracking-normal);
+  }
+}
+
+/* Stardeck Custom Animations & Patterns */
+
+/* Grid background pattern */
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Scan line animation */
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+.animate-scan {
+  animation: scan 8s linear infinite;
+}
+
+/* Slow pulse for glow effects */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+
+/* CRT flicker effect (subtle) */
+@keyframes flicker {
+  0%, 100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.8;
+  }
+  94% {
+    opacity: 1;
+  }
+}
+
+.animate-flicker {
+  animation: flicker 5s linear infinite;
+}
+
+/* Text glow effect */
+.text-glow {
+  text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+}
+
+/* Border glow effect */
+.border-glow {
+  box-shadow: 0 0 10px var(--accent), inset 0 0 10px transparent;
+}
+
+/* Typing cursor animation */
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Boot sequence text animation */
+@keyframes typewriter {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.animate-typewriter {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: typewriter 2s steps(40) forwards;
+}
+
+/* Horizontal scan line overlay */
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+}
+
+/* Delay utilities */
+.delay-1000 {
+  animation-delay: 1000ms;
+}
+
+.delay-2000 {
+  animation-delay: 2000ms;
+}
