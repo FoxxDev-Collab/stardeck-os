@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { Activity, Users, UserPlus, Edit, Trash2, Shield, User as UserIcon } from "lucide-react";
+import { Activity, Users, UserPlus, Edit, Trash2, Shield, User as UserIcon, UsersRound, X, Check } from "lucide-react";
 
 interface User {
   id: number;
@@ -21,6 +21,13 @@ interface User {
   last_login?: string;
 }
 
+interface Group {
+  id: number;
+  name: string;
+  display_name: string;
+  description?: string;
+}
+
 export default function UserManagerPage() {
   const { isAuthenticated, isLoading, user: currentUser, token } = useAuth();
   const router = useRouter();
@@ -30,6 +37,13 @@ export default function UserManagerPage() {
   const [newUser, setNewUser] = useState({ username: "", display_name: "", password: "", role: "viewer" as const });
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+
+  // Group management state
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [userGroups, setUserGroups] = useState<number[]>([]);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     if (!token) return;
@@ -50,6 +64,103 @@ export default function UserManagerPage() {
       setError(err instanceof Error ? err.message : "Failed to load users");
     }
   }, [token]);
+
+  const fetchGroups = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const response = await fetch("/api/groups", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch groups");
+      }
+
+      const data = await response.json();
+      setGroups(data || []);
+    } catch (err) {
+      console.error("Failed to load groups:", err);
+    }
+  }, [token]);
+
+  const fetchUserGroups = useCallback(async (userId: number) => {
+    if (!token) return [];
+
+    try {
+      // Get all groups and check which ones the user belongs to
+      const groupsResponse = await fetch("/api/groups", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!groupsResponse.ok) return [];
+
+      const allGroups: Group[] = await groupsResponse.json();
+      const membershipPromises = allGroups.map(async (group) => {
+        const membersResponse = await fetch(`/api/groups/${group.id}/members`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!membersResponse.ok) return null;
+        const members = await membersResponse.json();
+        const isMember = members.some((m: { id: number }) => m.id === userId);
+        return isMember ? group.id : null;
+      });
+
+      const memberships = await Promise.all(membershipPromises);
+      return memberships.filter((id): id is number => id !== null);
+    } catch (err) {
+      console.error("Failed to load user groups:", err);
+      return [];
+    }
+  }, [token]);
+
+  const openGroupModal = async (user: User) => {
+    setSelectedUser(user);
+    setShowGroupModal(true);
+    setIsLoadingGroups(true);
+
+    await fetchGroups();
+    const memberships = await fetchUserGroups(user.id);
+    setUserGroups(memberships);
+    setIsLoadingGroups(false);
+  };
+
+  const toggleGroupMembership = async (groupId: number) => {
+    if (!token || !selectedUser) return;
+
+    const isCurrentMember = userGroups.includes(groupId);
+
+    try {
+      if (isCurrentMember) {
+        // Remove from group
+        const response = await fetch(`/api/groups/${groupId}/members/${selectedUser.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error("Failed to remove from group");
+        setUserGroups(prev => prev.filter(id => id !== groupId));
+      } else {
+        // Add to group
+        const response = await fetch(`/api/groups/${groupId}/members`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ user_ids: [selectedUser.id] }),
+        });
+        if (!response.ok) throw new Error("Failed to add to group");
+        setUserGroups(prev => [...prev, groupId]);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to update group membership");
+    }
+  };
+
+  const closeGroupModal = () => {
+    setShowGroupModal(false);
+    setSelectedUser(null);
+    setUserGroups([]);
+  };
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -345,6 +456,15 @@ export default function UserManagerPage() {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => openGroupModal(user)}
+                        className="gap-2"
+                      >
+                        <UsersRound className="w-3 h-3" />
+                        Groups
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => handleToggleUser(user.id, user.disabled)}
                         className="gap-2"
                       >
@@ -370,6 +490,82 @@ export default function UserManagerPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Group Assignment Modal */}
+        {showGroupModal && selectedUser && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md mx-4">
+              <div className="flex items-center justify-between p-4 border-b border-border">
+                <div>
+                  <h2 className="text-lg font-semibold">Manage Groups</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Assign {selectedUser.username} to groups
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={closeGroupModal}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="p-4 max-h-96 overflow-y-auto">
+                {isLoadingGroups ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Activity className="w-6 h-6 text-accent animate-pulse" />
+                  </div>
+                ) : groups.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <UsersRound className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>No groups available</p>
+                    <p className="text-xs mt-1">Create groups in the Group Manager</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {groups.map((group) => {
+                      const isMember = userGroups.includes(group.id);
+                      return (
+                        <button
+                          key={group.id}
+                          onClick={() => toggleGroupMembership(group.id)}
+                          className={`w-full p-3 rounded-lg border transition-colors flex items-center justify-between ${
+                            isMember
+                              ? "border-accent bg-accent/10 hover:bg-accent/20"
+                              : "border-border hover:bg-background/60"
+                          }`}
+                        >
+                          <div className="text-left">
+                            <div className="font-medium">{group.display_name}</div>
+                            <div className="text-xs text-muted-foreground">{group.name}</div>
+                            {group.description && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {group.description}
+                              </div>
+                            )}
+                          </div>
+                          <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                            isMember
+                              ? "border-accent bg-accent text-accent-foreground"
+                              : "border-muted-foreground"
+                          }`}>
+                            {isMember && <Check className="w-4 h-4" />}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end p-4 border-t border-border">
+                <Button variant="outline" size="sm" onClick={closeGroupModal}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

@@ -9,6 +9,7 @@ import (
 
 	"stardeckos-backend/internal/auth"
 	"stardeckos-backend/internal/database"
+	"stardeckos-backend/internal/models"
 )
 
 var authService *auth.Service
@@ -39,6 +40,11 @@ func loginHandler(c echo.Context) error {
 
 	resp, err := authService.Login(req, ipAddress, userAgent)
 	if err != nil {
+		// Log failed login attempt
+		Audit.Log(0, req.Username, models.ActionLoginFailed, req.Username, map[string]string{
+			"reason": err.Error(),
+		}, ipAddress)
+
 		switch {
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			return c.JSON(http.StatusUnauthorized, map[string]string{
@@ -60,6 +66,15 @@ func loginHandler(c echo.Context) error {
 		}
 	}
 
+	// Log successful login
+	Audit.Log(resp.User.ID, resp.User.Username, models.ActionLogin, resp.User.Username, nil, ipAddress)
+
+	// Clear rate limit on successful login
+	auth.LoginRateLimiter.RecordSuccess(ipAddress)
+
+	// Generate CSRF token
+	csrfToken := auth.CSRF.GenerateToken(resp.User.ID)
+
 	// Set token in cookie (HttpOnly for security)
 	cookie := &http.Cookie{
 		Name:     "session_token",
@@ -75,6 +90,7 @@ func loginHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"user":       resp.User,
 		"token":      resp.Token,
+		"csrf_token": csrfToken,
 		"expires_at": resp.ExpiresAt,
 	})
 }
@@ -88,12 +104,20 @@ func logoutHandler(c echo.Context) error {
 		})
 	}
 
+	// Get user info before logout for audit logging
+	user, _, _ := authService.ValidateToken(token)
+
 	if err := authService.Logout(token); err != nil {
 		if errors.Is(err, database.ErrSessionNotFound) {
 			// Session already gone, that's fine
 		} else {
 			c.Logger().Error("logout error: ", err)
 		}
+	}
+
+	// Log logout event
+	if user != nil {
+		Audit.Log(user.ID, user.Username, models.ActionLogout, user.Username, nil, c.RealIP())
 	}
 
 	// Clear cookie
@@ -218,6 +242,11 @@ func revokeSession(c echo.Context) error {
 			"error": "failed to revoke session",
 		})
 	}
+
+	// Log session revocation
+	Audit.Log(user.ID, user.Username, models.ActionSessionRevoke, "session", map[string]int64{
+		"session_id": sessionID,
+	}, c.RealIP())
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"message": "session revoked",

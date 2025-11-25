@@ -16,6 +16,8 @@ import {
   FolderOpen,
   UserCog,
   Globe,
+  Terminal,
+  FileText,
 } from "lucide-react";
 
 interface DesktopApp {
@@ -78,6 +80,14 @@ const desktopApps: DesktopApp[] = [
     color: "text-chart-2",
   },
   {
+    id: "terminal",
+    icon: <Terminal className="w-8 h-8" />,
+    label: "Terminal",
+    href: "/terminal",
+    description: "Interactive shell terminal",
+    color: "text-green-500",
+  },
+  {
     id: "user-manager",
     icon: <Users className="w-8 h-8" />,
     label: "User Manager",
@@ -102,6 +112,15 @@ const desktopApps: DesktopApp[] = [
     href: "/realm-manager",
     description: "Manage authentication realms and domains",
     color: "text-accent",
+    adminOnly: true,
+  },
+  {
+    id: "audit-log",
+    icon: <FileText className="w-8 h-8" />,
+    label: "Audit Log",
+    href: "/audit-log",
+    description: "View system audit logs and security events",
+    color: "text-orange-400",
     adminOnly: true,
   },
   {

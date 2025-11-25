@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
 export type TaskbarPosition = "top" | "bottom";
+export type AccentColor = "cyan" | "amber" | "green" | "purple" | "red";
 
 export interface TraySettings {
   showCpu: boolean;
@@ -13,11 +14,45 @@ export interface TraySettings {
 }
 
 export interface ThemeSettings {
-  accentColor: "cyan" | "amber" | "green" | "purple" | "red";
+  accentColor: AccentColor;
   enableScanlines: boolean;
   enableGlow: boolean;
   enableAnimations: boolean;
 }
+
+// Accent color definitions in OKLCH format
+const accentColors: Record<AccentColor, { light: string; dark: string; lightForeground: string; darkForeground: string }> = {
+  cyan: {
+    light: "oklch(0.7889 0.1105 196.6173)",
+    dark: "oklch(0.7000 0.1190 200.4390)",
+    lightForeground: "oklch(0.1496 0 0)",
+    darkForeground: "oklch(0.1290 0.0714 263.7567)",
+  },
+  amber: {
+    light: "oklch(0.7500 0.1500 65.0000)",
+    dark: "oklch(0.7500 0.1500 65.0000)",
+    lightForeground: "oklch(0.1496 0 0)",
+    darkForeground: "oklch(0.1290 0.0714 263.7567)",
+  },
+  green: {
+    light: "oklch(0.7200 0.1500 145.0000)",
+    dark: "oklch(0.6800 0.1500 145.0000)",
+    lightForeground: "oklch(0.1496 0 0)",
+    darkForeground: "oklch(0.1290 0.0714 263.7567)",
+  },
+  purple: {
+    light: "oklch(0.6500 0.1500 300.0000)",
+    dark: "oklch(0.6800 0.1500 300.0000)",
+    lightForeground: "oklch(0.9791 0 0)",
+    darkForeground: "oklch(0.9791 0 0)",
+  },
+  red: {
+    light: "oklch(0.6500 0.2000 25.0000)",
+    dark: "oklch(0.6500 0.2000 25.0000)",
+    lightForeground: "oklch(0.9791 0 0)",
+    darkForeground: "oklch(0.9791 0 0)",
+  },
+};
 
 export interface DesktopSettings {
   iconSize: "small" | "medium" | "large";
@@ -97,6 +132,44 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [settings, isLoaded]);
+
+  // Apply accent color to CSS variables
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const root = document.documentElement;
+    const colorDef = accentColors[settings.theme.accentColor];
+    const isDark = root.classList.contains("dark");
+
+    // Apply accent color
+    root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
+    root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
+
+    // Also update ring color to match accent
+    root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
+  }, [settings.theme.accentColor, isLoaded]);
+
+  // Watch for dark mode changes and reapply colors
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === "attributes" && mutation.attributeName === "class") {
+          const root = document.documentElement;
+          const colorDef = accentColors[settings.theme.accentColor];
+          const isDark = root.classList.contains("dark");
+
+          root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
+          root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
+          root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
+        }
+      });
+    });
+
+    observer.observe(document.documentElement, { attributes: true });
+    return () => observer.disconnect();
+  }, [settings.theme.accentColor, isLoaded]);
 
   const updateSettings = (updates: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...updates }));

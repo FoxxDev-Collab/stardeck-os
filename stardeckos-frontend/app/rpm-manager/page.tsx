@@ -12,14 +12,13 @@ import { DashboardLayout } from "@/components/dashboard-layout";
 import { 
   Package, 
   Download, 
-  CheckCircle2, 
-  AlertTriangle, 
-  RefreshCw, 
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
   Search,
   Plus,
   Trash2,
   Edit,
-  Database,
   Server,
   AlertCircle
 } from "lucide-react";
@@ -122,6 +121,7 @@ export default function RPMManagerPage() {
         fetchRepositories();
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, token, activeTab]);
 
   // ===== Updates Tab Functions =====

@@ -24,9 +24,9 @@ func NewUserRepo() *UserRepo {
 // Create creates a new user
 func (r *UserRepo) Create(user *models.User) error {
 	result, err := DB.Exec(`
-		INSERT INTO users (username, display_name, password_hash, role, auth_type, disabled)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, user.Username, user.DisplayName, user.PasswordHash, user.Role, user.AuthType, user.Disabled)
+		INSERT INTO users (username, display_name, password_hash, user_type, role, auth_type, disabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, user.Username, user.DisplayName, user.PasswordHash, user.UserType, user.Role, user.AuthType, user.Disabled)
 	if err != nil {
 		return err
 	}
@@ -46,12 +46,12 @@ func (r *UserRepo) GetByID(id int64) (*models.User, error) {
 	var lastLogin sql.NullTime
 
 	err := DB.QueryRow(`
-		SELECT id, username, display_name, password_hash, role, auth_type, disabled,
+		SELECT id, username, display_name, password_hash, user_type, role, auth_type, disabled,
 		       created_at, updated_at, last_login
 		FROM users WHERE id = ?
 	`, id).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-		&user.Role, &user.AuthType, &user.Disabled,
+		&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
 		&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 	)
 	if err == sql.ErrNoRows {
@@ -74,12 +74,12 @@ func (r *UserRepo) GetByUsername(username string) (*models.User, error) {
 	var lastLogin sql.NullTime
 
 	err := DB.QueryRow(`
-		SELECT id, username, display_name, password_hash, role, auth_type, disabled,
+		SELECT id, username, display_name, password_hash, user_type, role, auth_type, disabled,
 		       created_at, updated_at, last_login
 		FROM users WHERE username = ?
 	`, username).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-		&user.Role, &user.AuthType, &user.Disabled,
+		&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
 		&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 	)
 	if err == sql.ErrNoRows {
@@ -99,7 +99,7 @@ func (r *UserRepo) GetByUsername(username string) (*models.User, error) {
 // List retrieves all users
 func (r *UserRepo) List() ([]*models.User, error) {
 	rows, err := DB.Query(`
-		SELECT id, username, display_name, password_hash, role, auth_type, disabled,
+		SELECT id, username, display_name, password_hash, user_type, role, auth_type, disabled,
 		       created_at, updated_at, last_login
 		FROM users ORDER BY username
 	`)
@@ -115,7 +115,7 @@ func (r *UserRepo) List() ([]*models.User, error) {
 
 		err := rows.Scan(
 			&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-			&user.Role, &user.AuthType, &user.Disabled,
+			&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
 			&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 		)
 		if err != nil {
@@ -140,11 +140,12 @@ func (r *UserRepo) Update(user *models.User) error {
 		UPDATE users SET
 			display_name = ?,
 			password_hash = ?,
+			user_type = ?,
 			role = ?,
 			disabled = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, user.DisplayName, user.PasswordHash, user.Role, user.Disabled, user.UpdatedAt, user.ID)
+	`, user.DisplayName, user.PasswordHash, user.UserType, user.Role, user.Disabled, user.UpdatedAt, user.ID)
 	if err != nil {
 		return err
 	}

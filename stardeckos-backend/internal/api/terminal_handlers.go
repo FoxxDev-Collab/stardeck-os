@@ -26,6 +26,24 @@ func HandleTerminalWebSocket(c echo.Context) error {
 	websocket.Handler(func(ws *websocket.Conn) {
 		defer ws.Close()
 
+		// Validate authentication from query parameter
+		token := c.QueryParam("token")
+		if token == "" {
+			log.Println("Terminal WebSocket: No token provided")
+			ws.Close()
+			return
+		}
+
+		// Validate token
+		user, _, err := authService.ValidateToken(token)
+		if err != nil {
+			log.Printf("Terminal WebSocket: Invalid token: %v", err)
+			ws.Close()
+			return
+		}
+
+		log.Printf("Terminal WebSocket: User %s connected", user.Username)
+
 		// Determine which shell to use
 		shell := os.Getenv("SHELL")
 		if shell == "" {

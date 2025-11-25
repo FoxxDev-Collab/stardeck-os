@@ -112,6 +112,30 @@ func RequireWheelOrRoot(authSvc *Service) echo.MiddlewareFunc {
 	}
 }
 
+// RequireSystemUser middleware restricts access to system users only
+// Web users are blocked from system administration features
+func RequireSystemUser() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user, ok := c.Get(ContextKeyUser).(*models.User)
+			if !ok || user == nil {
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "authentication required",
+				})
+			}
+
+			// Only system users can access this endpoint
+			if !user.IsSystemUser() {
+				return c.JSON(http.StatusForbidden, map[string]string{
+					"error": "access denied: system administrator privileges required",
+				})
+			}
+
+			return next(c)
+		}
+	}
+}
+
 // OptionalAuth middleware attempts to authenticate but doesn't require it
 // Sets user in context if authenticated, otherwise continues without user
 func OptionalAuth(authSvc *Service) echo.MiddlewareFunc {

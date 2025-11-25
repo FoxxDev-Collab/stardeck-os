@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"stardeckos-backend/internal/auth"
 	"stardeckos-backend/internal/system"
 )
 
@@ -20,11 +21,44 @@ const maxPreviewSize = 1024 * 1024
 // Maximum upload size (100MB)
 const maxUploadSize = 100 * 1024 * 1024
 
+// validateFilePath checks if a web user is allowed to access the given path
+// Web users can only access /home/<username>/ directory
+// System users have full access
+func validateFilePath(c echo.Context, path string) error {
+	user := auth.GetUserFromContext(c)
+	if user == nil {
+		return fmt.Errorf("authentication required")
+	}
+
+	// System users have unrestricted access
+	if user.IsSystemUser() {
+		return nil
+	}
+
+	// Web users are restricted to their home directory
+	cleanPath := filepath.Clean(path)
+	userHomeDir := filepath.Join("/home", user.Username)
+
+	// Check if the path is within the user's home directory
+	if !strings.HasPrefix(cleanPath, userHomeDir) {
+		return fmt.Errorf("access denied: web users can only access their home directory")
+	}
+
+	return nil
+}
+
 // listFilesHandler handles GET /api/files
 func listFilesHandler(c echo.Context) error {
 	path := c.QueryParam("path")
 	if path == "" {
 		path = "/"
+	}
+
+	// Validate path access for web users
+	if err := validateFilePath(c, path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
 	}
 
 	listing, err := system.ListDirectory(path)
@@ -46,6 +80,13 @@ func getFileInfoHandler(c echo.Context) error {
 		})
 	}
 
+	// Validate path access for web users
+	if err := validateFilePath(c, path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	info, err := system.GetFileInfo(path)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{
@@ -62,6 +103,13 @@ func downloadFileHandler(c echo.Context) error {
 	if path == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "path is required",
+		})
+	}
+
+	// Validate path access for web users
+	if err := validateFilePath(c, path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
 		})
 	}
 
@@ -96,6 +144,13 @@ func previewFileHandler(c echo.Context) error {
 		})
 	}
 
+	// Validate path access for web users
+	if err := validateFilePath(c, path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	content, err := system.ReadFileContent(path, maxPreviewSize)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
@@ -127,6 +182,13 @@ func uploadFileHandler(c echo.Context) error {
 	if targetPath == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "target path is required",
+		})
+	}
+
+	// Validate path access for web users
+	if err := validateFilePath(c, targetPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
 		})
 	}
 
@@ -204,6 +266,13 @@ func createDirectoryHandler(c echo.Context) error {
 
 	fullPath := filepath.Join(filepath.Clean(req.Path), req.Name)
 
+	// Validate path access for web users
+	if err := validateFilePath(c, fullPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	if err := system.CreateDirectory(fullPath, 0755); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": err.Error(),
@@ -240,6 +309,13 @@ func createFileHandler(c echo.Context) error {
 
 	fullPath := filepath.Join(filepath.Clean(req.Path), req.Name)
 
+	// Validate path access for web users
+	if err := validateFilePath(c, fullPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	if err := system.WriteFileContent(fullPath, []byte(req.Content), 0644); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": err.Error(),
@@ -274,6 +350,13 @@ func updateFileHandler(c echo.Context) error {
 	}
 
 	cleanPath := filepath.Clean(req.Path)
+
+	// Validate path access for web users
+	if err := validateFilePath(c, cleanPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
 
 	// Check if file exists
 	info, err := os.Stat(cleanPath)
@@ -325,6 +408,18 @@ func renameFileHandler(c echo.Context) error {
 		})
 	}
 
+	// Validate both paths for web users
+	if err := validateFilePath(c, req.OldPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+	if err := validateFilePath(c, req.NewPath); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	if err := system.RenamePath(req.OldPath, req.NewPath); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": err.Error(),
@@ -358,6 +453,18 @@ func copyFileHandler(c echo.Context) error {
 		})
 	}
 
+	// Validate both paths for web users
+	if err := validateFilePath(c, req.Source); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+	if err := validateFilePath(c, req.Destination); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
+		})
+	}
+
 	if err := system.CopyFile(req.Source, req.Destination); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": err.Error(),
@@ -378,6 +485,13 @@ func deleteFileHandler(c echo.Context) error {
 	if path == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "path is required",
+		})
+	}
+
+	// Validate path access for web users
+	if err := validateFilePath(c, path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
 		})
 	}
 
@@ -407,6 +521,13 @@ func changePermissionsHandler(c echo.Context) error {
 	if change.Path == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "path is required",
+		})
+	}
+
+	// Validate path access for web users
+	if err := validateFilePath(c, change.Path); err != nil {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": err.Error(),
 		})
 	}
 

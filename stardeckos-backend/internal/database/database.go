@@ -281,4 +281,19 @@ var migrations = []migration{
 			CREATE INDEX idx_group_permissions_permission_id ON group_permissions(permission_id);
 		`,
 	},
+	{
+		name: "010_add_user_type",
+		up: `
+			-- Add user_type column to users table
+			ALTER TABLE users ADD COLUMN user_type TEXT NOT NULL DEFAULT 'system';
+			
+			-- Create index on user_type for efficient filtering
+			CREATE INDEX idx_users_user_type ON users(user_type);
+			
+			-- Update existing users: PAM users with admin role become system users
+			-- Local users with admin role also become system users
+			-- Everyone else defaults to 'system' for backward compatibility
+			-- In production, you may want to manually set web users
+		`,
+	},
 }

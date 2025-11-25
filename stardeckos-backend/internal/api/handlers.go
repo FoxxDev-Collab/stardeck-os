@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"stardeckos-backend/internal/models"
 	"stardeckos-backend/internal/system"
 )
 
@@ -58,6 +59,12 @@ func killProcess(c echo.Context) error {
 			"error": err.Error(),
 		})
 	}
+
+	// Log process kill
+	Audit.LogFromContext(c, models.ActionProcessKill, pidStr, map[string]interface{}{
+		"pid":    pid,
+		"signal": int(signal),
+	})
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"status": "signal sent",
@@ -120,6 +127,29 @@ func serviceAction(c echo.Context) error {
 		})
 	}
 
+	// Log service action
+	var auditAction string
+	switch action {
+	case "start":
+		auditAction = models.ActionServiceStart
+	case "stop":
+		auditAction = models.ActionServiceStop
+	case "restart":
+		auditAction = models.ActionServiceRestart
+	case "reload":
+		auditAction = models.ActionServiceReload
+	case "enable":
+		auditAction = models.ActionServiceEnable
+	case "disable":
+		auditAction = models.ActionServiceDisable
+	default:
+		auditAction = "service." + action
+	}
+	Audit.LogFromContext(c, auditAction, name, map[string]string{
+		"service": name,
+		"action":  action,
+	})
+
 	return c.JSON(http.StatusOK, map[string]string{
 		"status":  "success",
 		"service": name,
@@ -157,6 +187,12 @@ func applyUpdates(c echo.Context) error {
 	if !result.Success {
 		return c.JSON(http.StatusInternalServerError, result)
 	}
+
+	// Log update apply
+	Audit.LogFromContext(c, models.ActionUpdateApply, "system", map[string]interface{}{
+		"packages":         req.Packages,
+		"packages_updated": result.PackagesUpdated,
+	})
 
 	return c.JSON(http.StatusOK, result)
 }

@@ -2,6 +2,14 @@ package models
 
 import "time"
 
+// UserType represents the type of user account
+type UserType string
+
+const (
+	UserTypeSystem UserType = "system" // System admin with full server access
+	UserTypeWeb    UserType = "web"    // Web user with limited access (no system admin)
+)
+
 // Role represents user access levels
 type Role string
 
@@ -26,6 +34,7 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	Email        string    `json:"email,omitempty"`
 	PasswordHash string    `json:"-"` // Never expose in JSON
+	UserType     UserType  `json:"user_type"`
 	Role         Role      `json:"role"`
 	AuthType     AuthType  `json:"auth_type"`
 	RealmID      *int64    `json:"realm_id,omitempty"`
@@ -36,24 +45,36 @@ type User struct {
 	LastLogin    time.Time `json:"last_login,omitempty"`
 }
 
+// IsSystemUser returns true if the user is a system administrator
+func (u *User) IsSystemUser() bool {
+	return u.UserType == UserTypeSystem
+}
+
+// IsWebUser returns true if the user is a web-only user
+func (u *User) IsWebUser() bool {
+	return u.UserType == UserTypeWeb
+}
+
 // CreateUserRequest represents the request body for creating a user
 type CreateUserRequest struct {
-	Username     string `json:"username" validate:"required,min=3,max=32"`
-	DisplayName  string `json:"display_name" validate:"required,min=1,max=64"`
-	Email        string `json:"email,omitempty" validate:"omitempty,email"`
-	Password     string `json:"password" validate:"required,min=8"`
-	Role         Role   `json:"role" validate:"required,oneof=admin operator viewer"`
-	RealmID      *int64 `json:"realm_id,omitempty"`
-	CreateSystem bool   `json:"create_system"` // Also create Linux system user
+	Username     string   `json:"username" validate:"required,min=3,max=32"`
+	DisplayName  string   `json:"display_name" validate:"required,min=1,max=64"`
+	Email        string   `json:"email,omitempty" validate:"omitempty,email"`
+	Password     string   `json:"password" validate:"required,min=8"`
+	UserType     UserType `json:"user_type" validate:"required,oneof=system web"`
+	Role         Role     `json:"role" validate:"required,oneof=admin operator viewer"`
+	RealmID      *int64   `json:"realm_id,omitempty"`
+	CreateSystem bool     `json:"create_system"` // Also create Linux system user
 }
 
 // UpdateUserRequest represents the request body for updating a user
 type UpdateUserRequest struct {
-	DisplayName *string `json:"display_name,omitempty"`
-	Email       *string `json:"email,omitempty"`
-	Password    *string `json:"password,omitempty"`
-	Role        *Role   `json:"role,omitempty"`
-	Disabled    *bool   `json:"disabled,omitempty"`
+	DisplayName *string   `json:"display_name,omitempty"`
+	Email       *string   `json:"email,omitempty"`
+	Password    *string   `json:"password,omitempty"`
+	UserType    *UserType `json:"user_type,omitempty"`
+	Role        *Role     `json:"role,omitempty"`
+	Disabled    *bool     `json:"disabled,omitempty"`
 }
 
 // UserWithGroups includes user's group memberships

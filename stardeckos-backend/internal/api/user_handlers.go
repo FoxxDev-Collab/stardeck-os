@@ -86,10 +86,16 @@ func createUserHandler(c echo.Context) error {
 		displayName = req.Username
 	}
 
+	userType := req.UserType
+	if userType == "" {
+		userType = models.UserTypeWeb // Default to web user for safety
+	}
+
 	user := &models.User{
 		Username:     req.Username,
 		DisplayName:  displayName,
 		PasswordHash: passwordHash,
+		UserType:     userType,
 		Role:         role,
 		AuthType:     models.AuthTypeLocal,
 	}
@@ -100,6 +106,13 @@ func createUserHandler(c echo.Context) error {
 			"error": "failed to create user",
 		})
 	}
+
+	// Log user creation
+	Audit.LogFromContext(c, models.ActionUserCreate, user.Username, map[string]interface{}{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"role":     user.Role,
+	})
 
 	return c.JSON(http.StatusCreated, user)
 }
@@ -163,6 +176,9 @@ func updateUserHandler(c echo.Context) error {
 	if req.DisplayName != nil {
 		user.DisplayName = *req.DisplayName
 	}
+	if req.UserType != nil {
+		user.UserType = *req.UserType
+	}
 	if req.Role != nil {
 		user.Role = *req.Role
 	}
@@ -192,6 +208,12 @@ func updateUserHandler(c echo.Context) error {
 		})
 	}
 
+	// Log user update
+	Audit.LogFromContext(c, models.ActionUserUpdate, user.Username, map[string]interface{}{
+		"user_id":  user.ID,
+		"username": user.Username,
+	})
+
 	return c.JSON(http.StatusOK, user)
 }
 
@@ -212,6 +234,9 @@ func deleteUserHandler(c echo.Context) error {
 		})
 	}
 
+	// Get user info before deletion for audit logging
+	targetUser, _ := userRepo.GetByID(id)
+
 	if err := userRepo.Delete(id); err != nil {
 		if errors.Is(err, database.ErrUserNotFound) {
 			return c.JSON(http.StatusNotFound, map[string]string{
@@ -223,6 +248,16 @@ func deleteUserHandler(c echo.Context) error {
 			"error": "failed to delete user",
 		})
 	}
+
+	// Log user deletion
+	targetUsername := ""
+	if targetUser != nil {
+		targetUsername = targetUser.Username
+	}
+	Audit.LogFromContext(c, models.ActionUserDelete, targetUsername, map[string]interface{}{
+		"user_id":  id,
+		"username": targetUsername,
+	})
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"message": "user deleted",

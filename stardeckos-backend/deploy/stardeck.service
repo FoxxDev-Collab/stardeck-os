@@ -1,0 +1,46 @@
+[Unit]
+Description=Stardeck OS - Web-based Server Management
+Documentation=https://github.com/stardeck/stardeck-os
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Environment configuration
+Environment=STARDECK_PORT=8080
+Environment=STARDECK_DB_PATH=/var/lib/stardeck/stardeck.db
+EnvironmentFile=-/etc/stardeck/stardeck.env
+
+# Working directory
+WorkingDirectory=/opt/stardeck
+
+# Start command
+ExecStart=/opt/stardeck/stardeck
+
+# Restart configuration
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/stardeck
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stardeck
+
+[Install]
+WantedBy=multi-user.target

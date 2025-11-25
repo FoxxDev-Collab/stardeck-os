@@ -22,6 +22,8 @@ import {
   UserCog,
   Globe,
   Server,
+  Terminal,
+  FileText,
 } from "lucide-react";
 
 interface NavItem {
@@ -29,6 +31,7 @@ interface NavItem {
   href: string;
   icon: React.ElementType;
   adminOnly?: boolean;
+  systemUserOnly?: boolean;  // Requires PAM auth (system user)
 }
 
 interface NavSection {
@@ -36,6 +39,7 @@ interface NavSection {
   icon: React.ElementType;
   items: NavItem[];
   adminOnly?: boolean;
+  systemUserOnly?: boolean;  // Requires PAM auth (system user)
 }
 
 const navItems: NavItem[] = [
@@ -47,6 +51,7 @@ const navSections: NavSection[] = [
   {
     name: "Server Management",
     icon: Server,
+    systemUserOnly: true,  // Only system users (PAM auth) can access server management
     items: [
       { name: "System Monitor", href: "/system-monitor", icon: Activity },
       { name: "Process Manager", href: "/process-manager", icon: ListChecks },
@@ -54,16 +59,19 @@ const navSections: NavSection[] = [
       { name: "RPM Manager", href: "/rpm-manager", icon: Package },
       { name: "Storage Viewer", href: "/storage-viewer", icon: HardDrive },
       { name: "File Browser", href: "/file-browser", icon: FolderOpen },
+      { name: "Terminal", href: "/terminal", icon: Terminal },
     ],
   },
   {
     name: "Administration",
     icon: Shield,
     adminOnly: true,
+    systemUserOnly: true,  // Only system users (PAM auth) can access
     items: [
       { name: "User Manager", href: "/user-manager", icon: Users },
       { name: "Group Manager", href: "/group-manager", icon: UserCog },
       { name: "Realm Manager", href: "/realm-manager", icon: Globe },
+      { name: "Audit Log", href: "/audit-log", icon: FileText },
     ],
   },
 ];
@@ -80,13 +88,21 @@ export function StartMenu({ isOpen, onClose }: StartMenuProps) {
     new Set(["Server Management", "Administration"])
   );
 
-  const filteredNavItems = navItems.filter(
-    (item) => !item.adminOnly || user?.role === "admin"
-  );
+  // Check if user is a system user (PAM auth)
+  const isSystemUser = user?.auth_type === "pam";
+  const isAdmin = user?.role === "admin";
 
-  const filteredNavSections = navSections.filter(
-    (section) => !section.adminOnly || user?.role === "admin"
-  );
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.systemUserOnly && !isSystemUser) return false;
+    if (item.adminOnly && !isAdmin) return false;
+    return true;
+  });
+
+  const filteredNavSections = navSections.filter((section) => {
+    if (section.systemUserOnly && !isSystemUser) return false;
+    if (section.adminOnly && !isAdmin) return false;
+    return true;
+  });
 
   const toggleSection = (sectionName: string) => {
     setExpandedSections((prev) => {

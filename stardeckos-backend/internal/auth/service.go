@@ -179,8 +179,11 @@ func (s *Service) authenticatePAM(username, password string) (*models.User, erro
 
 	// Determine role based on group membership
 	role := models.RoleViewer
+	userType := models.UserTypeWeb // Default to web user
+
 	if s.pamAuth.IsAdmin(username) {
 		role = models.RoleAdmin
+		userType = models.UserTypeSystem // Admin users are system users
 	}
 
 	displayName := sysUser.Name
@@ -191,6 +194,7 @@ func (s *Service) authenticatePAM(username, password string) (*models.User, erro
 	user = &models.User{
 		Username:    username,
 		DisplayName: displayName,
+		UserType:    userType,
 		AuthType:    models.AuthTypePAM,
 		Role:        role,
 	}

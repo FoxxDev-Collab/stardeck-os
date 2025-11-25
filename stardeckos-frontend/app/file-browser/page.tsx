@@ -374,7 +374,7 @@ function FileBrowserContent() {
   const [uploadProgress, setUploadProgress] = useState(0);
 
   // Sidebar state
-  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [sidebarWidth] = useState(240);
 
   const fetchDirectory = useCallback(async (path: string) => {
     if (!token) return;

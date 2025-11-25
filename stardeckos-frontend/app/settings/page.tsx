@@ -31,12 +31,30 @@ import {
   Tag,
   Maximize2,
   Paintbrush,
+  Shield,
+  Laptop,
+  Smartphone,
+  Globe,
+  Trash2,
+  RefreshCw,
 } from "lucide-react";
 
+interface Session {
+  id: number;
+  user_id: number;
+  created_at: string;
+  expires_at: string;
+  ip_address: string;
+  user_agent: string;
+}
+
 export default function SettingsPage() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, token } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
   const {
     settings,
     updateSettings,
@@ -45,6 +63,59 @@ export default function SettingsPage() {
     updateDesktopSettings,
     resetSettings,
   } = useSettings();
+
+  const fetchSessions = async () => {
+    if (!token) return;
+    setIsLoadingSessions(true);
+    try {
+      const response = await fetch("/api/auth/sessions", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSessions(data || []);
+        // Try to identify current session (most recent one from same IP might be current)
+        const meResponse = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (meResponse.ok) {
+          const meData = await meResponse.json();
+          setCurrentSessionId(meData.session?.id || null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch sessions:", err);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  const revokeSession = async (sessionId: number) => {
+    if (!token || !confirm("Are you sure you want to revoke this session?")) return;
+    try {
+      const response = await fetch(`/api/auth/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId));
+      } else {
+        alert("Failed to revoke session");
+      }
+    } catch {
+      alert("Failed to revoke session");
+    }
+  };
+
+  const parseUserAgent = (ua: string) => {
+    if (!ua) return { device: "Unknown", browser: "Unknown" };
+    const isMobile = /mobile|android|iphone|ipad/i.test(ua);
+    const browser = ua.match(/(chrome|firefox|safari|edge|opera)/i)?.[1] || "Unknown";
+    return {
+      device: isMobile ? "Mobile" : "Desktop",
+      browser: browser.charAt(0).toUpperCase() + browser.slice(1).toLowerCase(),
+    };
+  };
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -61,6 +132,13 @@ export default function SettingsPage() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      fetchSessions();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, token]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -105,14 +183,14 @@ export default function SettingsPage() {
           </div>
 
           <Tabs defaultValue="taskbar" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 bg-card/70 border border-border/50">
+            <TabsList className="grid w-full grid-cols-5 bg-card/70 border border-border/50">
               <TabsTrigger value="taskbar" className="gap-2 data-[state=active]:bg-accent/20">
                 <Monitor className="w-4 h-4" />
                 <span className="hidden sm:inline">Taskbar</span>
               </TabsTrigger>
               <TabsTrigger value="tray" className="gap-2 data-[state=active]:bg-accent/20">
                 <Activity className="w-4 h-4" />
-                <span className="hidden sm:inline">System Tray</span>
+                <span className="hidden sm:inline">Tray</span>
               </TabsTrigger>
               <TabsTrigger value="theme" className="gap-2 data-[state=active]:bg-accent/20">
                 <Palette className="w-4 h-4" />
@@ -121,6 +199,10 @@ export default function SettingsPage() {
               <TabsTrigger value="desktop" className="gap-2 data-[state=active]:bg-accent/20">
                 <Layout className="w-4 h-4" />
                 <span className="hidden sm:inline">Desktop</span>
+              </TabsTrigger>
+              <TabsTrigger value="security" className="gap-2 data-[state=active]:bg-accent/20">
+                <Shield className="w-4 h-4" />
+                <span className="hidden sm:inline">Security</span>
               </TabsTrigger>
             </TabsList>
 
@@ -348,8 +430,8 @@ export default function SettingsPage() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-muted-foreground/60 mt-3">
-                    Theme color customization will be available in a future update
+                  <p className="text-xs text-muted-foreground mt-3">
+                    Select an accent color to customize the interface theme
                   </p>
                 </CardContent>
               </Card>
@@ -557,6 +639,145 @@ export default function SettingsPage() {
                       onCheckedChange={(checked) => updateDesktopSettings({ coloredIcons: checked })}
                     />
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Security Settings */}
+            <TabsContent value="security" className="mt-6 space-y-4">
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Shield className="w-5 h-5 text-accent" />
+                        Active Sessions
+                      </CardTitle>
+                      <CardDescription>
+                        Manage your active login sessions across devices
+                      </CardDescription>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={fetchSessions}
+                      disabled={isLoadingSessions}
+                      className="gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isLoadingSessions ? "animate-spin" : ""}`} />
+                      Refresh
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {isLoadingSessions ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Activity className="w-6 h-6 text-accent animate-pulse" />
+                    </div>
+                  ) : sessions.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Shield className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                      <p>No active sessions found</p>
+                    </div>
+                  ) : (
+                    sessions.map((session) => {
+                      const { device, browser } = parseUserAgent(session.user_agent);
+                      const isCurrentSession = session.id === currentSessionId;
+                      const expiresAt = new Date(session.expires_at);
+                      const createdAt = new Date(session.created_at);
+
+                      return (
+                        <div
+                          key={session.id}
+                          className={`
+                            p-4 rounded-lg border transition-colors
+                            ${isCurrentSession
+                              ? "border-accent/50 bg-accent/5"
+                              : "border-border/50 bg-background/40 hover:bg-background/60"
+                            }
+                          `}
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                              <div className={`
+                                p-2 rounded-lg
+                                ${isCurrentSession ? "bg-accent/20 text-accent" : "bg-muted/50 text-muted-foreground"}
+                              `}>
+                                {device === "Mobile" ? (
+                                  <Smartphone className="w-5 h-5" />
+                                ) : (
+                                  <Laptop className="w-5 h-5" />
+                                )}
+                              </div>
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">{browser} on {device}</span>
+                                  {isCurrentSession && (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-accent/20 text-accent">
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <Globe className="w-3 h-3" />
+                                    {session.ip_address || "Unknown IP"}
+                                  </span>
+                                  <span>•</span>
+                                  <span>Created {createdAt.toLocaleDateString()}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Expires: {expiresAt.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                            {!isCurrentSession && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => revokeSession(session.id)}
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-accent" />
+                    Session Security
+                  </CardTitle>
+                  <CardDescription>
+                    Information about your session security settings
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 text-sm">
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-background/40 border border-border/30">
+                      <span className="text-muted-foreground">Session timeout</span>
+                      <span className="font-mono text-accent">24 hours</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-background/40 border border-border/30">
+                      <span className="text-muted-foreground">Token rotation</span>
+                      <span className="text-green-500">Enabled</span>
+                    </div>
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-background/40 border border-border/30">
+                      <span className="text-muted-foreground">IP binding</span>
+                      <span className="text-yellow-500">Recommended</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Sessions automatically expire after 24 hours of inactivity.
+                    You can revoke sessions from other devices at any time.
+                  </p>
                 </CardContent>
               </Card>
             </TabsContent>
