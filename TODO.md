@@ -24,6 +24,11 @@
 - [x] Package updates available API (dnf check-update)
 - [x] Package update apply API (dnf update)
 - [x] Package update history API (dnf history)
+- [x] **NEW: Repository management (add/edit/delete DNF repos)**
+- [x] **NEW: Package search API (dnf search)**
+- [x] **NEW: Package installation API (dnf install)**
+- [x] **NEW: Package removal API (dnf remove)**
+- [x] **NEW: Metadata refresh API (dnf makecache)**
 - [x] **NEW: Wheel/Root authorization middleware for user management**
 - [x] **NEW: System user/group integration (useradd, usermod, groupadd, etc.)**
 - [x] **NEW: Realm/Domain management system (LDAP/AD/OIDC/SAML hooks)**
@@ -33,6 +38,9 @@
 - [x] **NEW: File Browser API (list, read, write, create, delete, rename, copy)**
 - [x] **NEW: File upload/download endpoints (up to 100MB)**
 - [x] **NEW: File permission management (chmod, chown)**
+- [x] **NEW: Storage partition management API (create, format, delete partitions)**
+- [x] **NEW: Storage mount/unmount API**
+- [x] **NEW: Device validation for secure storage operations**
 
 ### Frontend
 - [x] Login page with auth
@@ -40,8 +48,8 @@
 - [x] System Monitor wired to real data
 - [x] Process Manager wired to real data
 - [x] Service Manager wired to real data
-- [x] Storage Viewer wired to real data
-- [x] Update Manager wired to real data
+- [x] Storage Manager wired to real data (upgraded from Storage Viewer)
+- [x] RPM Manager wired to real data (renamed from Update Manager)
 - [x] User Manager wired to real data
 - [x] All ESLint errors fixed
 - [x] Production build successful
@@ -52,6 +60,13 @@
 - [x] **NEW: Settings page (taskbar position, tray config, theme, desktop)**
 - [x] **NEW: Colored icons with toggle in settings**
 - [x] **NEW: File Browser UI (breadcrumb nav, context menus, dialogs)**
+- [x] **NEW: RPM Manager UI (3 tabs: Updates/Packages/Repositories)**
+- [x] **NEW: Repository CRUD interface**
+- [x] **NEW: Package search and installation UI**
+- [x] **NEW: Selective package update interface**
+- [x] **NEW: Storage Manager UI with partition management (create, format, delete)**
+- [x] **NEW: Mount/unmount controls for filesystems**
+- [x] **NEW: LVM volume groups and logical volumes display**
 
 ## In Progress
 
@@ -138,3 +153,22 @@ Groups can be assigned permissions, and users inherit permissions from their gro
 - Users can be created as both Stardeck users and Linux system users simultaneously
 - PAM authentication validates against actual system credentials
 - All system operations require proper sudo/wheel privileges
+
+### RPM Manager
+The RPM Manager provides comprehensive package management capabilities:
+- **Updates Tab**: View available updates with security badges, selective update installation, metadata refresh
+- **Packages Tab**: Search packages across repositories, multi-select installation, package details
+- **Repositories Tab**: Full CRUD for DNF repository configuration (/etc/yum.repos.d/)
+- All repository and package operations require wheel/root privileges
+- Supports baseurl, mirrorlist, metalink repository configurations
+- GPG key management and repository enable/disable
+
+### Storage Manager
+The Storage Manager provides disk and partition management capabilities:
+- **Physical Disks**: View all block devices with model, size, type (SSD/HDD)
+- **Partitions**: Create, format (ext4, xfs, swap, vfat), and delete partitions
+- **Mount Points**: View mounted filesystems with usage bars, mount/unmount controls
+- **LVM**: Display volume groups, logical volumes, and physical volumes
+- All partition operations require admin/operator role
+- Device validation prevents operations on invalid or dangerous paths
+- Protected mounts (/, /boot) cannot be unmounted from UI

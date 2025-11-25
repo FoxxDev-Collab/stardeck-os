@@ -145,4 +145,7 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	files.POST("/copy", copyFileHandler)
 	files.DELETE("", deleteFileHandler)
 	files.PATCH("/permissions", changePermissionsHandler)
+
+	// Terminal WebSocket route (authenticated)
+	api.GET("/terminal/ws", HandleTerminalWebSocket, auth.RequireAuth(authSvc))
 }
