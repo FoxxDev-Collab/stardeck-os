@@ -249,6 +249,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	containers.GET("", listContainersHandler)
 	containers.GET("/:id", getContainerHandler)
 	containers.POST("", createContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.POST("/validate", validateContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.GET("/deploy", deployContainerHandler, auth.RequireRole(models.RoleAdmin)) // WebSocket
 	containers.PUT("/:id", updateContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.DELETE("/:id", removeContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.POST("/:id/start", startContainerHandler, auth.RequireOperatorOrAdmin())

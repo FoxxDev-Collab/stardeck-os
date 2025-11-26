@@ -79,20 +79,26 @@
 ## In Progress
 
 ### Phase 2B: Container Management
-- [ ] M2B.1: Podman integration (list, create, start, stop, remove)
-- [ ] M2B.2: Container Manager UI (basic list and actions)
-- [ ] M2B.3: Compose parser and validator
-- [ ] M2B.4: Visual config editor (ports, volumes, env vars)
-- [ ] M2B.5: Monaco code editor integration
-- [ ] M2B.6: File browser component
-- [ ] M2B.7: Environment variable manager with secrets
-- [ ] M2B.8: Podman volume and network management
-- [ ] M2B.9: Web UI proxy system
-- [ ] M2B.10: Desktop icon integration
-- [ ] M2B.11: Template system
-- [ ] M2B.12: Real-time logs and stats
-- [ ] M2B.13: Testing with complex multi-container apps
-- [ ] M2B.14: Documentation and user guide
+- [x] M2B.1: Podman integration (list, create, start, stop, remove, inspect)
+- [x] M2B.2: Container Manager UI (5-tab interface: Containers, Images, Volumes, Networks, Stacks)
+- [x] M2B.3: Compose parser and validator (YAML-based stacks)
+- [x] M2B.4: Visual config editor (dedicated container creation page with ports, volumes, env vars)
+- [x] M2B.5: Monaco code editor integration (YAML editor for stacks)
+- [x] M2B.6: Docker Hub image search and browse
+- [x] M2B.7: Environment variable manager with .env import/export
+- [x] M2B.8: Podman volume and network management
+- [x] M2B.9: Port usage tracking (shows which containers use which ports)
+- [x] M2B.10: Enhanced port selector with common presets and conflict detection
+- [x] M2B.11: Container stats charts (CPU, memory, network I/O with sparklines)
+- [x] M2B.12: Real-time logs with search, filtering, and download
+- [x] M2B.13: Container terminal (WebSocket-based shell access)
+- [x] M2B.14: Image browser (pull, search, delete images)
+- [x] M2B.15: Stack deployment (create, deploy, start, stop, delete compose stacks)
+- [ ] M2B.16: Web UI proxy system (iframe containers with web interfaces)
+- [ ] M2B.17: Desktop icon integration (add running containers to desktop)
+- [ ] M2B.18: Container template system (save/load container configurations)
+- [ ] M2B.19: Testing with complex multi-container apps
+- [ ] M2B.20: Documentation and user guide
 
 ---
 
@@ -225,3 +231,63 @@ The Storage Manager provides disk and partition management capabilities:
 - All partition operations require admin/operator role
 - Device validation prevents operations on invalid or dangerous paths
 - Protected mounts (/, /boot) cannot be unmounted from UI
+
+### Container Manager (Phase 2B - In Progress)
+The Container Manager provides comprehensive Podman container orchestration:
+
+**Backend Features**:
+- **Podman Integration**: Full container lifecycle management (list, create, start, stop, restart, pause, unpause, remove)
+- **Container Inspection**: Detailed container metadata and runtime information
+- **Image Management**: Pull, list, and remove container images
+- **Volume Management**: Create, list, and remove Podman volumes
+- **Network Management**: List Podman networks and connections
+- **Stack Management**: Docker Compose/Podman Compose file deployment
+- **WebSocket Terminals**: Real-time shell access to running containers
+- **Streaming Logs**: Live container log streaming with search and filtering
+- **Port Tracking**: API endpoint to query which containers use which ports
+- **Docker Hub Proxy**: Backend proxy for Docker Hub image searches (avoids CORS)
+
+**Frontend Features**:
+- **5-Tab Interface**:
+  - **Containers**: List all containers with status, stats, and quick actions
+  - **Images**: Browse images with pull/delete capabilities, Docker Hub search
+  - **Volumes**: Manage persistent storage volumes
+  - **Networks**: View network configurations
+  - **Stacks**: Deploy and manage multi-container applications via compose files
+
+- **Elite Components**:
+  - **ContainerStatsChart**: Real-time CPU/memory/network monitoring with sparklines and trend indicators
+  - **ContainerTerminal**: WebSocket-based shell with full terminal emulation
+  - **ContainerLogs**: Streaming logs with search, filter by level (error/warn/info), download capability
+  - **ImageBrowser**: Search Docker Hub, pull images, view local image repository
+  - **StacksTab**: YAML editor for compose files with deployment streaming
+
+- **Enhanced Container Creation** (Dedicated Page):
+  - **Docker Hub Integration**: Live search and browse Docker Hub images with star counts, pull counts, official/automated badges
+  - **Port Management**: 
+    - Common port presets (HTTP, HTTPS, databases)
+    - Real-time port conflict detection
+    - Hover tooltips showing which container uses each port
+    - Visual indicators for ports already in use
+  - **Volume Management**: Host path mounting with read-only option
+  - **Environment Variables**: Add individually or import/export .env files
+  - **Advanced Settings**: CPU/memory limits, custom commands, entrypoints, working directory, user, hostname
+  - **5-Tab Configuration**: Basic, Ports, Volumes, Environment, Advanced
+
+- **Reusable Components**:
+  - **PortSelector**: Intelligent port mapping with usage tracking and conflict warnings
+  - Extensible for use in other parts of the application
+
+**Container Features**:
+- System user authentication required (not web-only users)
+- Admin role required for create/delete operations
+- Operator+ role for start/stop/restart operations
+- All system users can view containers and stats
+- Container metadata enrichment from SQLite database (web UI flags, custom icons)
+
+**Remaining Tasks**:
+- Web UI proxy system (iframe integration for containerized web apps)
+- Desktop icon integration (add containers as desktop shortcuts)
+- Container template system (save/load common configurations)
+- Multi-container application testing and optimization
+

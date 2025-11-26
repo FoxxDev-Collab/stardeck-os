@@ -263,6 +263,314 @@ func getContainerHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
+// ValidationResult holds a single validation check result
+type ValidationResult struct {
+	Check   string `json:"check"`
+	Status  string `json:"status"` // "ok", "warning", "error"
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// validateContainerHandler validates container configuration before creation
+func validateContainerHandler(c echo.Context) error {
+	var req models.CreateContainerRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request: " + err.Error(),
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
+	defer cancel()
+
+	results := []ValidationResult{}
+
+	// 1. Validate container name
+	if req.Name == "" {
+		results = append(results, ValidationResult{
+			Check:   "container_name",
+			Status:  "warning",
+			Message: "No container name specified",
+			Details: "A random name will be generated",
+		})
+	} else {
+		// Check if name already exists
+		exists, _ := podmanService.ContainerExists(ctx, req.Name)
+		if exists {
+			results = append(results, ValidationResult{
+				Check:   "container_name",
+				Status:  "error",
+				Message: "Container name already exists",
+				Details: fmt.Sprintf("A container named '%s' already exists", req.Name),
+			})
+		} else {
+			results = append(results, ValidationResult{
+				Check:   "container_name",
+				Status:  "ok",
+				Message: "Container name is available",
+			})
+		}
+	}
+
+	// 2. Validate image
+	if req.Image == "" {
+		results = append(results, ValidationResult{
+			Check:   "image",
+			Status:  "error",
+			Message: "No image specified",
+			Details: "An image is required to create a container",
+		})
+	} else {
+		// Check if image exists locally
+		imageExists := podmanService.ImageExists(ctx, req.Image)
+		if imageExists {
+			results = append(results, ValidationResult{
+				Check:   "image",
+				Status:  "ok",
+				Message: "Image found locally",
+				Details: req.Image,
+			})
+		} else {
+			results = append(results, ValidationResult{
+				Check:   "image",
+				Status:  "warning",
+				Message: "Image not found locally",
+				Details: "Image will be pulled from registry during deployment",
+			})
+		}
+	}
+
+	// 3. Validate ports
+	usedPorts := []string{}
+	containers, _ := podmanService.ListContainers(ctx)
+	for _, container := range containers {
+		for _, port := range container.Ports {
+			if port.HostPort > 0 {
+				usedPorts = append(usedPorts, fmt.Sprintf("%d/%s", port.HostPort, port.Protocol))
+			}
+		}
+	}
+
+	portConflicts := []string{}
+	for _, port := range req.Ports {
+		portKey := fmt.Sprintf("%d/%s", port.HostPort, port.Protocol)
+		for _, used := range usedPorts {
+			if portKey == used {
+				portConflicts = append(portConflicts, fmt.Sprintf("%d", port.HostPort))
+			}
+		}
+	}
+
+	if len(portConflicts) > 0 {
+		results = append(results, ValidationResult{
+			Check:   "ports",
+			Status:  "error",
+			Message: "Port conflicts detected",
+			Details: fmt.Sprintf("Ports already in use: %v", portConflicts),
+		})
+	} else if len(req.Ports) > 0 {
+		results = append(results, ValidationResult{
+			Check:   "ports",
+			Status:  "ok",
+			Message: fmt.Sprintf("%d port mapping(s) configured", len(req.Ports)),
+		})
+	}
+
+	// 4. Validate volumes
+	for _, vol := range req.Volumes {
+		if vol.Source == "" || vol.Target == "" {
+			results = append(results, ValidationResult{
+				Check:   "volumes",
+				Status:  "error",
+				Message: "Invalid volume configuration",
+				Details: "Both source and target paths are required",
+			})
+			break
+		}
+	}
+	if len(req.Volumes) > 0 {
+		results = append(results, ValidationResult{
+			Check:   "volumes",
+			Status:  "ok",
+			Message: fmt.Sprintf("%d volume mount(s) configured", len(req.Volumes)),
+		})
+	}
+
+	// 5. Check overall validity
+	hasErrors := false
+	for _, r := range results {
+		if r.Status == "error" {
+			hasErrors = true
+			break
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"valid":   !hasErrors,
+		"results": results,
+	})
+}
+
+// deployContainerHandler creates and starts a container with WebSocket streaming
+func deployContainerHandler(c echo.Context) error {
+	// Upgrade to WebSocket
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+
+	// Read the container config from WebSocket
+	_, message, err := ws.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	var req models.CreateContainerRequest
+	if err := json.Unmarshal(message, &req); err != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"step":    "error",
+			"message": "Invalid configuration: " + err.Error(),
+			"error":   true,
+		})
+		return nil
+	}
+
+	user := c.Get("user").(*models.User)
+
+	// Helper to send status updates
+	sendStatus := func(step, message string, isError bool, details map[string]interface{}) {
+		payload := map[string]interface{}{
+			"step":    step,
+			"message": message,
+			"error":   isError,
+		}
+		for k, v := range details {
+			payload[k] = v
+		}
+		ws.WriteJSON(payload)
+	}
+
+	ctx := context.Background()
+
+	// Step 1: Validate configuration
+	sendStatus("validate", "Validating configuration...", false, nil)
+	time.Sleep(300 * time.Millisecond) // Brief pause for UX
+
+	if req.Image == "" {
+		sendStatus("validate", "No image specified", true, nil)
+		return nil
+	}
+
+	// Check container name
+	if req.Name != "" {
+		exists, _ := podmanService.ContainerExists(ctx, req.Name)
+		if exists {
+			sendStatus("validate", fmt.Sprintf("Container name '%s' already exists", req.Name), true, nil)
+			return nil
+		}
+	}
+
+	sendStatus("validate", "Configuration validated", false, map[string]interface{}{"complete": true})
+
+	// Step 2: Check/Pull image
+	sendStatus("pull", "Checking for image...", false, nil)
+
+	imageExists := podmanService.ImageExists(ctx, req.Image)
+	if imageExists {
+		sendStatus("pull", "Image found locally", false, map[string]interface{}{"complete": true})
+	} else {
+		sendStatus("pull", "Pulling image from registry...", false, map[string]interface{}{
+			"pulling": true,
+		})
+
+		// Pull with streaming output
+		outputChan := make(chan string, 100)
+		errChan := make(chan error, 1)
+
+		go func() {
+			errChan <- podmanService.PullImageWithProgress(ctx, req.Image, outputChan)
+		}()
+
+		// Stream pull output
+		for line := range outputChan {
+			sendStatus("pull", line, false, map[string]interface{}{"output": true})
+		}
+
+		if err := <-errChan; err != nil {
+			sendStatus("pull", "Failed to pull image: "+err.Error(), true, nil)
+			return nil
+		}
+
+		sendStatus("pull", "Image pulled successfully", false, map[string]interface{}{"complete": true})
+	}
+
+	// Step 3: Create container
+	sendStatus("create", "Creating container...", false, nil)
+
+	containerID, err := podmanService.CreateContainer(ctx, &req)
+	if err != nil {
+		sendStatus("create", "Failed to create container: "+err.Error(), true, nil)
+		return nil
+	}
+
+	sendStatus("create", "Container created", false, map[string]interface{}{
+		"complete":     true,
+		"container_id": containerID,
+	})
+
+	// Store in database
+	dbContainer := &models.Container{
+		ContainerID: containerID,
+		Name:        req.Name,
+		Image:       req.Image,
+		Status:      models.ContainerStatusCreated,
+		HasWebUI:    req.HasWebUI,
+		WebUIPort:   req.WebUIPort,
+		WebUIPath:   req.WebUIPath,
+		Icon:        req.Icon,
+		AutoStart:   req.AutoStart,
+		CreatedBy:   &user.ID,
+	}
+
+	if req.Labels != nil {
+		labelsJSON, _ := json.Marshal(req.Labels)
+		dbContainer.Labels = string(labelsJSON)
+	}
+
+	containerRepo.Create(dbContainer)
+
+	// Step 4: Start container (if auto-start enabled)
+	if req.AutoStart {
+		sendStatus("start", "Starting container...", false, nil)
+
+		if err := podmanService.StartContainer(ctx, containerID); err != nil {
+			sendStatus("start", "Failed to start container: "+err.Error(), true, nil)
+			return nil
+		}
+
+		sendStatus("start", "Container started", false, map[string]interface{}{"complete": true})
+	}
+
+	// Final success
+	sendStatus("complete", "Container deployed successfully!", false, map[string]interface{}{
+		"container_id":   containerID,
+		"container_name": req.Name,
+		"complete":       true,
+	})
+
+	// Audit log
+	logAudit(user, models.ActionContainerCreate, req.Name, map[string]interface{}{
+		"image":        req.Image,
+		"container_id": containerID,
+	})
+
+	return nil
+}
+
 // createContainerHandler creates a new container
 func createContainerHandler(c echo.Context) error {
 	var req models.CreateContainerRequest

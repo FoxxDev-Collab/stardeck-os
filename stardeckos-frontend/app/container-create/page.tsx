@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PortSelector } from "@/components/port-selector";
 import { 
   ArrowLeft, 
@@ -28,7 +29,12 @@ import {
   Play,
   Save,
   Info,
-  ExternalLink
+  ExternalLink,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Loader2,
+  Terminal
 } from "lucide-react";
 
 interface DockerHubImage {
@@ -58,9 +64,25 @@ interface EnvVar {
   value: string;
 }
 
+interface ValidationResult {
+  check: string;
+  status: "ok" | "warning" | "error";
+  message: string;
+  details?: string;
+}
+
+interface DeployStep {
+  step: string;
+  message: string;
+  error: boolean;
+  complete?: boolean;
+  output?: boolean;
+}
+
 export default function ContainerCreatePage() {
   const router = useRouter();
   const { token } = useAuth();
+  const deployOutputRef = useRef<HTMLDivElement>(null);
   
   // Basic settings
   const [containerName, setContainerName] = useState("");
@@ -102,6 +124,171 @@ export default function ContainerCreatePage() {
   // UI state
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Validation and deployment state
+  const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
+  const [isValidating, setIsValidating] = useState(false);
+  const [showDeployDialog, setShowDeployDialog] = useState(false);
+  const [deploySteps, setDeploySteps] = useState<DeployStep[]>([]);
+  const [deployOutput, setDeployOutput] = useState<string[]>([]);
+  const [deployComplete, setDeployComplete] = useState(false);
+  const [deployError, setDeployError] = useState(false);
+
+  // Auto-scroll deploy output
+  useEffect(() => {
+    if (deployOutputRef.current) {
+      deployOutputRef.current.scrollTop = deployOutputRef.current.scrollHeight;
+    }
+  }, [deployOutput, deploySteps]);
+
+  // Live validation when key fields change
+  useEffect(() => {
+    const validateConfig = async () => {
+      if (!token || !imageName) {
+        setValidationResults([]);
+        return;
+      }
+
+      setIsValidating(true);
+      try {
+        const payload = buildPayload();
+        const response = await fetch("/api/containers/validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setValidationResults(data.results || []);
+        }
+      } catch (err) {
+        console.error("Validation error:", err);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+
+    const timer = setTimeout(validateConfig, 500);
+    return () => clearTimeout(timer);
+  }, [token, imageName, imageTag, containerName, ports]);
+
+  // Build the container creation payload
+  const buildPayload = () => {
+    return {
+      name: containerName || undefined,
+      image: imageTag ? `${imageName}:${imageTag}` : imageName,
+      auto_start: autoStart,
+      privileged,
+      network_mode: networkMode,
+      restart_policy: restartPolicy,
+      ports: ports.map(p => ({
+        host_port: parseInt(p.hostPort),
+        container_port: parseInt(p.containerPort),
+        protocol: p.protocol,
+      })),
+      volumes: volumes.map(v => ({
+        source: v.hostPath,
+        target: v.containerPath,
+        read_only: v.readOnly,
+      })),
+      environment: envVars.reduce((acc, ev) => {
+        acc[ev.key] = ev.value;
+        return acc;
+      }, {} as Record<string, string>),
+      command: command ? command.split(" ") : undefined,
+      entrypoint: entrypoint ? entrypoint.split(" ") : undefined,
+      work_dir: workingDir || undefined,
+      user: user || undefined,
+      hostname: hostname || undefined,
+      cpu_limit: cpuLimit ? parseFloat(cpuLimit) : undefined,
+      memory_limit: memoryLimit ? parseInt(memoryLimit) * 1024 * 1024 : undefined,
+    };
+  };
+
+  // Deploy container with WebSocket streaming
+  const deployContainer = async () => {
+    if (!imageName) {
+      setError("Please specify an image");
+      return;
+    }
+
+    // Check for validation errors
+    const hasErrors = validationResults.some(r => r.status === "error");
+    if (hasErrors) {
+      setError("Please fix validation errors before deploying");
+      return;
+    }
+
+    setShowDeployDialog(true);
+    setDeploySteps([]);
+    setDeployOutput([]);
+    setDeployComplete(false);
+    setDeployError(false);
+
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//localhost:8080/api/containers/deploy`;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      // Send container configuration
+      ws.send(JSON.stringify(buildPayload()));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.output) {
+          // This is streaming output (like pull progress)
+          setDeployOutput(prev => [...prev, data.message]);
+        } else {
+          // This is a step update
+          setDeploySteps(prev => {
+            const existing = prev.find(s => s.step === data.step);
+            if (existing) {
+              return prev.map(s => s.step === data.step ? data : s);
+            }
+            return [...prev, data];
+          });
+
+          if (data.error) {
+            setDeployError(true);
+          }
+
+          if (data.step === "complete" && data.complete) {
+            setDeployComplete(true);
+          }
+        }
+      } catch (err) {
+        console.error("WebSocket message parse error:", err);
+      }
+    };
+
+    ws.onerror = () => {
+      setDeploySteps(prev => [...prev, {
+        step: "error",
+        message: "WebSocket connection failed",
+        error: true,
+      }]);
+      setDeployError(true);
+    };
+
+    ws.onclose = () => {
+      if (!deployComplete && !deployError) {
+        // Connection closed unexpectedly
+        setDeploySteps(prev => [...prev, {
+          step: "error",
+          message: "Connection closed unexpectedly",
+          error: true,
+        }]);
+      }
+    };
+  };
 
   // Search Docker Hub images
   const searchDockerHub = useCallback(async (query: string) => {
@@ -146,31 +333,6 @@ export default function ContainerCreatePage() {
     setImageName(image.repo_name);
     setSearchQuery("");
     setSearchResults([]);
-  };
-
-  // Port management
-  const addPort = () => {
-    if (newHostPort && newContainerPort) {
-      setPorts([...ports, { 
-        hostPort: newHostPort, 
-        containerPort: newContainerPort, 
-        protocol: newProtocol 
-      }]);
-      setNewHostPort("");
-      setNewContainerPort("");
-    }
-  };
-
-  const removePort = (index: number) => {
-    setPorts(ports.filter((_, i) => i !== index));
-  };
-
-  const addCommonPort = (port: string, name: string) => {
-    setPorts([...ports, { 
-      hostPort: port, 
-      containerPort: port, 
-      protocol: "tcp" 
-    }]);
   };
 
   // Volume management
@@ -247,69 +409,6 @@ export default function ContainerCreatePage() {
     URL.revokeObjectURL(url);
   };
 
-  // Create container
-  const createContainer = async () => {
-    if (!imageName) {
-      setError("Please specify an image");
-      return;
-    }
-
-    setIsCreating(true);
-    setError(null);
-
-    try {
-      const payload = {
-        name: containerName || undefined,
-        image: imageTag ? `${imageName}:${imageTag}` : imageName,
-        auto_start: autoStart,
-        privileged,
-        network_mode: networkMode,
-        restart_policy: restartPolicy,
-        ports: ports.map(p => ({
-          host_port: parseInt(p.hostPort),
-          container_port: parseInt(p.containerPort),
-          protocol: p.protocol,
-        })),
-        volumes: volumes.map(v => ({
-          host_path: v.hostPath,
-          container_path: v.containerPath,
-          read_only: v.readOnly,
-        })),
-        env_vars: envVars.reduce((acc, ev) => {
-          acc[ev.key] = ev.value;
-          return acc;
-        }, {} as Record<string, string>),
-        command: command || undefined,
-        entrypoint: entrypoint || undefined,
-        working_dir: workingDir || undefined,
-        user: user || undefined,
-        hostname: hostname || undefined,
-        cpu_limit: cpuLimit ? parseFloat(cpuLimit) : undefined,
-        memory_limit: memoryLimit ? parseInt(memoryLimit) : undefined,
-      };
-
-      const response = await fetch("/api/containers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create container");
-      }
-
-      router.push("/container-manager");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create container");
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   return (
     <DashboardLayout>
       <div className="flex flex-col h-full">
@@ -334,9 +433,9 @@ export default function ContainerCreatePage() {
             <Button variant="outline" onClick={() => router.push("/container-manager")}>
               Cancel
             </Button>
-            <Button onClick={createContainer} disabled={isCreating || !imageName}>
+            <Button onClick={deployContainer} disabled={isValidating || !imageName || validationResults.some(r => r.status === "error")}>
               <Play className="h-4 w-4 mr-2" />
-              {isCreating ? "Creating..." : "Create & Start"}
+              Deploy Container
             </Button>
           </div>
         </div>
@@ -835,6 +934,126 @@ export default function ContainerCreatePage() {
           </div>
         </ScrollArea>
       </div>
+
+      {/* Deployment Dialog */}
+      <Dialog open={showDeployDialog} onOpenChange={setShowDeployDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {deployComplete ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  Deployment Complete
+                </>
+              ) : deployError ? (
+                <>
+                  <XCircle className="h-5 w-5 text-red-500" />
+                  Deployment Failed
+                </>
+              ) : (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Deploying Container
+                </>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {/* Deployment Steps */}
+          <div className="space-y-3">
+            {deploySteps.map((step, index) => (
+              <div 
+                key={index} 
+                className={`flex items-center gap-3 p-3 rounded-lg border ${
+                  step.error 
+                    ? "bg-red-500/10 border-red-500/30" 
+                    : step.complete 
+                      ? "bg-green-500/10 border-green-500/30" 
+                      : "bg-muted/50 border-muted"
+                }`}
+              >
+                {step.error ? (
+                  <XCircle className="h-5 w-5 text-red-500 shrink-0" />
+                ) : step.complete ? (
+                  <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+                ) : (
+                  <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium">{step.step}</div>
+                  <div className="text-sm text-muted-foreground truncate">{step.message}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Streaming Output */}
+          {deployOutput.length > 0 && (
+            <div className="mt-4">
+              <Label className="mb-2 block">Output</Label>
+              <ScrollArea className="h-48 border rounded-lg bg-black/90 p-3">
+                <div ref={deployOutputRef} className="font-mono text-xs text-green-400 space-y-0.5">
+                  {deployOutput.map((line, index) => (
+                    <div key={index} className="whitespace-pre-wrap">{line}</div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          )}
+
+          {/* Validation Results Summary */}
+          {validationResults.length > 0 && !deployComplete && (
+            <div className="mt-4 space-y-2">
+              <Label className="mb-2 block">Pre-flight Checks</Label>
+              {validationResults.map((result, index) => (
+                <div 
+                  key={index}
+                  className={`flex items-start gap-2 p-2 rounded text-sm ${
+                    result.status === "error" 
+                      ? "bg-red-500/10 text-red-400" 
+                      : result.status === "warning"
+                        ? "bg-yellow-500/10 text-yellow-400"
+                        : "bg-green-500/10 text-green-400"
+                  }`}
+                >
+                  {result.status === "error" ? (
+                    <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  ) : result.status === "warning" ? (
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-medium">{result.check}:</span> {result.message}
+                    {result.details && (
+                      <div className="text-xs opacity-75 mt-1">{result.details}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 mt-4">
+            {deployComplete ? (
+              <>
+                <Button variant="outline" onClick={() => setShowDeployDialog(false)}>
+                  Deploy Another
+                </Button>
+                <Button onClick={() => router.push("/container-manager")}>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  View Containers
+                </Button>
+              </>
+            ) : deployError ? (
+              <Button variant="outline" onClick={() => setShowDeployDialog(false)}>
+                Close
+              </Button>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

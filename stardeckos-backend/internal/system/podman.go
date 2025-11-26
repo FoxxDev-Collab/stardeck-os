@@ -133,6 +133,38 @@ func (p *PodmanService) ListContainers(ctx context.Context) ([]models.ContainerL
 	return result, nil
 }
 
+// normalizeImageName ensures image names have a registry prefix
+// If no registry is specified, defaults to docker.io
+func normalizeImageName(image string) string {
+	// Check if image already has a registry (contains /)
+	// Examples:
+	// - "nginx" -> "docker.io/nginx"
+	// - "nginx:latest" -> "docker.io/nginx:latest"
+	// - "docker.io/nginx" -> "docker.io/nginx" (unchanged)
+	// - "ghcr.io/user/image" -> "ghcr.io/user/image" (unchanged)
+	// - "localhost:5000/myimage" -> "localhost:5000/myimage" (unchanged)
+
+	parts := strings.Split(image, "/")
+
+	// If there's only one part (no slashes) or the first part doesn't look like a registry
+	// (doesn't contain a dot or colon), prepend docker.io/
+	if len(parts) == 1 {
+		// Simple name like "nginx" or "nginx:latest"
+		return "docker.io/" + image
+	}
+
+	// Check if first part looks like a registry (has . or :)
+	firstPart := parts[0]
+	if !strings.Contains(firstPart, ".") && !strings.Contains(firstPart, ":") {
+		// First part is likely a namespace, not a registry
+		// Example: "library/nginx" -> "docker.io/library/nginx"
+		return "docker.io/" + image
+	}
+
+	// Already has a registry prefix
+	return image
+}
+
 // mapPodmanStatus maps Podman state strings to our ContainerStatus type
 func mapPodmanStatus(state string) models.ContainerStatus {
 	switch strings.ToLower(state) {
@@ -318,8 +350,9 @@ func (p *PodmanService) CreateContainer(ctx context.Context, req *models.CreateC
 		args = append(args, "--entrypoint", strings.Join(req.Entrypoint, " "))
 	}
 
-	// Image
-	args = append(args, req.Image)
+	// Image - normalize to include registry prefix
+	normalizedImage := normalizeImageName(req.Image)
+	args = append(args, normalizedImage)
 
 	// Command
 	if len(req.Command) > 0 {
@@ -577,8 +610,63 @@ func (p *PodmanService) ListImages(ctx context.Context) ([]models.Image, error) 
 
 // PullImage pulls an image from a registry
 func (p *PodmanService) PullImage(ctx context.Context, image string) error {
-	_, err := p.podmanCmd(ctx, "pull", image)
+	// Normalize image name to include registry prefix
+	normalizedImage := normalizeImageName(image)
+	_, err := p.podmanCmd(ctx, "pull", normalizedImage)
 	return err
+}
+
+// PullImageWithProgress pulls an image and streams progress to a channel
+func (p *PodmanService) PullImageWithProgress(ctx context.Context, image string, output chan<- string) error {
+	normalizedImage := normalizeImageName(image)
+	cmd := exec.CommandContext(ctx, "podman", "pull", normalizedImage)
+
+	// Get stdout and stderr pipes
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		close(output)
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		close(output)
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		close(output)
+		return err
+	}
+
+	// Read both stdout and stderr
+	go func() {
+		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line != "" {
+				output <- line
+			}
+		}
+		close(output)
+	}()
+
+	return cmd.Wait()
+}
+
+// ContainerExists checks if a container with the given name exists
+func (p *PodmanService) ContainerExists(ctx context.Context, name string) (bool, error) {
+	output, err := p.podmanCmd(ctx, "ps", "-a", "--filter", fmt.Sprintf("name=^%s$", name), "--format", "{{.Names}}")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+// ImageExists checks if an image exists locally
+func (p *PodmanService) ImageExists(ctx context.Context, image string) bool {
+	normalizedImage := normalizeImageName(image)
+	_, err := p.podmanCmd(ctx, "image", "exists", normalizedImage)
+	return err == nil
 }
 
 // RemoveImage removes an image
