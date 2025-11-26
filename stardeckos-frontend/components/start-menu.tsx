@@ -33,7 +33,7 @@ interface NavItem {
   href: string;
   icon: React.ElementType;
   adminOnly?: boolean;
-  systemUserOnly?: boolean;  // Requires PAM auth (system user)
+  operatorOrAdmin?: boolean;  // Requires operator or admin role
 }
 
 interface NavSection {
@@ -41,7 +41,7 @@ interface NavSection {
   icon: React.ElementType;
   items: NavItem[];
   adminOnly?: boolean;
-  systemUserOnly?: boolean;  // Requires PAM auth (system user)
+  operatorOrAdmin?: boolean;  // Requires operator or admin role
 }
 
 const navItems: NavItem[] = [
@@ -53,7 +53,7 @@ const navSections: NavSection[] = [
   {
     name: "Server Management",
     icon: Server,
-    systemUserOnly: true,  // Only system users (PAM auth) can access server management
+    operatorOrAdmin: true,  // Operators and admins can access server management
     items: [
       { name: "System Monitor", href: "/system-monitor", icon: Activity },
       { name: "Process Manager", href: "/process-manager", icon: ListChecks },
@@ -69,8 +69,7 @@ const navSections: NavSection[] = [
   {
     name: "Administration",
     icon: Shield,
-    adminOnly: true,
-    systemUserOnly: true,  // Only system users (PAM auth) can access
+    adminOnly: true,  // Only admins can access administration
     items: [
       { name: "User Manager", href: "/user-manager", icon: Users },
       { name: "Group Manager", href: "/group-manager", icon: UserCog },
@@ -92,18 +91,18 @@ export function StartMenu({ isOpen, onClose }: StartMenuProps) {
     new Set(["Server Management", "Administration"])
   );
 
-  // Check if user is a system user (PAM auth)
-  const isSystemUser = user?.auth_type === "pam";
-  const isAdmin = user?.role === "admin";
+  // Check user permissions
+  const isAdmin = user?.role === "admin" || user?.is_pam_admin;
+  const isOperatorOrAdmin = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
 
   const filteredNavItems = navItems.filter((item) => {
-    if (item.systemUserOnly && !isSystemUser) return false;
+    if (item.operatorOrAdmin && !isOperatorOrAdmin) return false;
     if (item.adminOnly && !isAdmin) return false;
     return true;
   });
 
   const filteredNavSections = navSections.filter((section) => {
-    if (section.systemUserOnly && !isSystemUser) return false;
+    if (section.operatorOrAdmin && !isOperatorOrAdmin) return false;
     if (section.adminOnly && !isAdmin) return false;
     return true;
   });

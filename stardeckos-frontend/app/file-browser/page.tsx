@@ -334,10 +334,13 @@ function QuickAccess({ onNavigate }: { onNavigate: (path: string) => void }) {
 }
 
 function FileBrowserContent() {
-  const { isAuthenticated, isLoading, token } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
 
   const [time, setTime] = useState<string>("");
   const [currentPath, setCurrentPath] = useState("/");
@@ -414,8 +417,10 @@ function FileBrowserContent() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
+    } else if (!isLoading && isAuthenticated && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, hasPermission, router]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -825,7 +830,7 @@ function FileBrowserContent() {
   const selectedCount = selectedFiles.size;
   const selectedFile = selectedCount === 1 ? getSelectedFiles()[0] : null;
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || !isAuthenticated || !hasPermission) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">

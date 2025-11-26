@@ -86,16 +86,10 @@ func createUserHandler(c echo.Context) error {
 		displayName = req.Username
 	}
 
-	userType := req.UserType
-	if userType == "" {
-		userType = models.UserTypeWeb // Default to web user for safety
-	}
-
 	user := &models.User{
 		Username:     req.Username,
 		DisplayName:  displayName,
 		PasswordHash: passwordHash,
-		UserType:     userType,
 		Role:         role,
 		AuthType:     models.AuthTypeLocal,
 	}
@@ -175,9 +169,6 @@ func updateUserHandler(c echo.Context) error {
 	// Apply updates
 	if req.DisplayName != nil {
 		user.DisplayName = *req.DisplayName
-	}
-	if req.UserType != nil {
-		user.UserType = *req.UserType
 	}
 	if req.Role != nil {
 		user.Role = *req.Role

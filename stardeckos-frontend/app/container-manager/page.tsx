@@ -122,6 +122,9 @@ export default function ContainerManagerPage() {
   const router = useRouter();
   const [time, setTime] = useState<string>("");
   const [podmanAvailable, setPodmanAvailable] = useState<boolean | null>(null);
+
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
   const [podmanVersion, setPodmanVersion] = useState<string>("");
   const [composeAvailable, setComposeAvailable] = useState<boolean>(false);
 
@@ -325,8 +328,10 @@ export default function ContainerManagerPage() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
+    } else if (!isLoading && isAuthenticated && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, hasPermission, router]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -353,7 +358,7 @@ export default function ContainerManagerPage() {
     }
   }, [isAuthenticated, token, checkPodman, fetchContainers, fetchImages, fetchVolumes, fetchNetworks]);
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || !isAuthenticated || !hasPermission) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Box className="w-12 h-12 text-accent animate-pulse" />

@@ -179,11 +179,11 @@ func (s *Service) authenticatePAM(username, password string) (*models.User, erro
 
 	// Determine role based on group membership
 	role := models.RoleViewer
-	userType := models.UserTypeWeb // Default to web user
+	isPAMAdmin := false
 
 	if s.pamAuth.IsAdmin(username) {
 		role = models.RoleAdmin
-		userType = models.UserTypeSystem // Admin users are system users
+		isPAMAdmin = true
 	}
 
 	displayName := sysUser.Name
@@ -194,9 +194,9 @@ func (s *Service) authenticatePAM(username, password string) (*models.User, erro
 	user = &models.User{
 		Username:    username,
 		DisplayName: displayName,
-		UserType:    userType,
 		AuthType:    models.AuthTypePAM,
 		Role:        role,
+		IsPAMAdmin:  isPAMAdmin,
 	}
 
 	if err := s.userRepo.Create(user); err != nil {
@@ -225,6 +225,11 @@ func (s *Service) ValidateToken(token string) (*models.User, *models.Session, er
 
 	if user.Disabled {
 		return nil, nil, ErrUserDisabled
+	}
+
+	// For PAM users, dynamically check admin status from system groups
+	if user.AuthType == models.AuthTypePAM {
+		user.IsPAMAdmin = s.pamAuth.IsAdmin(user.Username)
 	}
 
 	return user, session, nil

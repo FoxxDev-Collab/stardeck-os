@@ -138,6 +138,9 @@ export default function NetworkManagerPage() {
   const [time, setTime] = useState<string>("");
   const [activeTab, setActiveTab] = useState("interfaces");
 
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
+
   // Data states
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [interfaceStats, setInterfaceStats] = useState<Record<string, InterfaceStats>>({});
@@ -270,8 +273,10 @@ export default function NetworkManagerPage() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
+    } else if (!isLoading && isAuthenticated && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, hasPermission, router]);
 
   // Time update
   useEffect(() => {
@@ -481,7 +486,7 @@ export default function NetworkManagerPage() {
     }
   };
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || !isAuthenticated || !hasPermission) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Activity className="w-12 h-12 text-accent animate-pulse" />

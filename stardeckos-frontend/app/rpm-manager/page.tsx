@@ -96,9 +96,12 @@ interface OperationMessage {
 type OperationType = "update" | "install" | "remove" | "refresh" | null;
 
 export default function RPMManagerPage() {
-  const { isAuthenticated, isLoading, token } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
+
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
 
   // Updates tab state
   const [updates, setUpdates] = useState<Update[]>([]);
@@ -146,8 +149,10 @@ export default function RPMManagerPage() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
+    } else if (!isLoading && isAuthenticated && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, hasPermission, router]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -484,7 +489,7 @@ export default function RPMManagerPage() {
     setIsEditingRepo(true);
   };
 
-  if (isLoading) {
+  if (isLoading || !isAuthenticated || !hasPermission) {
     return (
       <DashboardLayout title="RPM Manager" time={time}>
         <div className="flex items-center justify-center h-64">
@@ -492,10 +497,6 @@ export default function RPMManagerPage() {
         </div>
       </DashboardLayout>
     );
-  }
-
-  if (!isAuthenticated) {
-    return null;
   }
 
   const securityUpdates = updates.filter((u) => u.security_update).length;

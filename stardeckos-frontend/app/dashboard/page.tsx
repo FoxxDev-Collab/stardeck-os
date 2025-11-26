@@ -41,7 +41,8 @@ interface DesktopApp {
   href: string;
   description: string;
   color: string;
-  adminOnly?: boolean;
+  adminOnly?: boolean;      // Only visible to admin users
+  operatorOrAdmin?: boolean; // Visible to operator and admin users (server management)
 }
 
 const desktopApps: DesktopApp[] = [
@@ -52,6 +53,7 @@ const desktopApps: DesktopApp[] = [
     href: "/system-monitor",
     description: "View real-time system metrics and performance data",
     color: "text-accent",
+    operatorOrAdmin: true,
   },
   {
     id: "process-manager",
@@ -60,6 +62,7 @@ const desktopApps: DesktopApp[] = [
     href: "/process-manager",
     description: "Monitor and manage running processes",
     color: "text-primary",
+    operatorOrAdmin: true,
   },
   {
     id: "service-manager",
@@ -68,6 +71,7 @@ const desktopApps: DesktopApp[] = [
     href: "/service-manager",
     description: "Control systemd services",
     color: "text-chart-5",
+    operatorOrAdmin: true,
   },
   {
     id: "network-manager",
@@ -76,6 +80,7 @@ const desktopApps: DesktopApp[] = [
     href: "/network-manager",
     description: "Manage network interfaces, firewall, and routes",
     color: "text-blue-400",
+    operatorOrAdmin: true,
   },
   {
     id: "container-manager",
@@ -84,6 +89,7 @@ const desktopApps: DesktopApp[] = [
     href: "/container-manager",
     description: "Manage Podman containers, images, and volumes",
     color: "text-cyan-400",
+    operatorOrAdmin: true,
   },
   {
     id: "rpm-manager",
@@ -92,6 +98,7 @@ const desktopApps: DesktopApp[] = [
     href: "/rpm-manager",
     description: "Manage packages, updates, and repositories",
     color: "text-chart-1",
+    operatorOrAdmin: true,
   },
   {
     id: "storage-viewer",
@@ -100,6 +107,7 @@ const desktopApps: DesktopApp[] = [
     href: "/storage-viewer",
     description: "View disk usage and storage information",
     color: "text-chart-3",
+    operatorOrAdmin: true,
   },
   {
     id: "file-browser",
@@ -108,6 +116,7 @@ const desktopApps: DesktopApp[] = [
     href: "/file-browser",
     description: "Browse, upload, and manage files",
     color: "text-chart-2",
+    operatorOrAdmin: true,
   },
   {
     id: "terminal",
@@ -116,6 +125,7 @@ const desktopApps: DesktopApp[] = [
     href: "/terminal",
     description: "Interactive shell terminal",
     color: "text-green-500",
+    operatorOrAdmin: true,
   },
   {
     id: "user-manager",
@@ -223,9 +233,16 @@ export default function DashboardPage() {
     );
   }
 
-  const filteredApps = desktopApps.filter(
-    (app) => !app.adminOnly || user?.role === "admin"
-  );
+  const isAdmin = user?.role === "admin" || user?.is_pam_admin;
+  const isOperatorOrAdmin = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
+
+  const filteredApps = desktopApps.filter((app) => {
+    // Admin-only apps require admin role
+    if (app.adminOnly && !isAdmin) return false;
+    // Operator+ apps require operator or admin role
+    if (app.operatorOrAdmin && !isOperatorOrAdmin) return false;
+    return true;
+  });
 
   const visibleApps = filteredApps.filter(app => !hiddenApps.has(app.id));
 

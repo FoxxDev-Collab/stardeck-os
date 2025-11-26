@@ -20,9 +20,12 @@ interface Service {
 }
 
 export default function ServiceManagerPage() {
-  const { isAuthenticated, isLoading, token } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
+
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
   const [services, setServices] = useState<Service[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "running" | "stopped" | "failed">("all");
@@ -52,8 +55,10 @@ export default function ServiceManagerPage() {
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       router.push("/login");
+    } else if (!isLoading && isAuthenticated && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, hasPermission, router]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -73,7 +78,7 @@ export default function ServiceManagerPage() {
     }
   }, [isAuthenticated, token, fetchServices]);
 
-  if (isLoading || !isAuthenticated) {
+  if (isLoading || !isAuthenticated || !hasPermission) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Activity className="w-12 h-12 text-accent animate-pulse" />

@@ -25,8 +25,8 @@ func NewUserRepo() *UserRepo {
 func (r *UserRepo) Create(user *models.User) error {
 	result, err := DB.Exec(`
 		INSERT INTO users (username, display_name, password_hash, user_type, role, auth_type, disabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, user.Username, user.DisplayName, user.PasswordHash, user.UserType, user.Role, user.AuthType, user.Disabled)
+		VALUES (?, ?, ?, 'system', ?, ?, ?)
+	`, user.Username, user.DisplayName, user.PasswordHash, user.Role, user.AuthType, user.Disabled)
 	if err != nil {
 		return err
 	}
@@ -44,6 +44,7 @@ func (r *UserRepo) Create(user *models.User) error {
 func (r *UserRepo) GetByID(id int64) (*models.User, error) {
 	user := &models.User{}
 	var lastLogin sql.NullTime
+	var userType string // Deprecated but still in DB
 
 	err := DB.QueryRow(`
 		SELECT id, username, display_name, password_hash, user_type, role, auth_type, disabled,
@@ -51,7 +52,7 @@ func (r *UserRepo) GetByID(id int64) (*models.User, error) {
 		FROM users WHERE id = ?
 	`, id).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-		&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
+		&userType, &user.Role, &user.AuthType, &user.Disabled,
 		&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 	)
 	if err == sql.ErrNoRows {
@@ -72,6 +73,7 @@ func (r *UserRepo) GetByID(id int64) (*models.User, error) {
 func (r *UserRepo) GetByUsername(username string) (*models.User, error) {
 	user := &models.User{}
 	var lastLogin sql.NullTime
+	var userType string // Deprecated but still in DB
 
 	err := DB.QueryRow(`
 		SELECT id, username, display_name, password_hash, user_type, role, auth_type, disabled,
@@ -79,7 +81,7 @@ func (r *UserRepo) GetByUsername(username string) (*models.User, error) {
 		FROM users WHERE username = ?
 	`, username).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-		&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
+		&userType, &user.Role, &user.AuthType, &user.Disabled,
 		&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 	)
 	if err == sql.ErrNoRows {
@@ -112,10 +114,11 @@ func (r *UserRepo) List() ([]*models.User, error) {
 	for rows.Next() {
 		user := &models.User{}
 		var lastLogin sql.NullTime
+		var userType string // Deprecated but still in DB
 
 		err := rows.Scan(
 			&user.ID, &user.Username, &user.DisplayName, &user.PasswordHash,
-			&user.UserType, &user.Role, &user.AuthType, &user.Disabled,
+			&userType, &user.Role, &user.AuthType, &user.Disabled,
 			&user.CreatedAt, &user.UpdatedAt, &lastLogin,
 		)
 		if err != nil {
@@ -140,12 +143,11 @@ func (r *UserRepo) Update(user *models.User) error {
 		UPDATE users SET
 			display_name = ?,
 			password_hash = ?,
-			user_type = ?,
 			role = ?,
 			disabled = ?,
 			updated_at = ?
 		WHERE id = ?
-	`, user.DisplayName, user.PasswordHash, user.UserType, user.Role, user.Disabled, user.UpdatedAt, user.ID)
+	`, user.DisplayName, user.PasswordHash, user.Role, user.Disabled, user.UpdatedAt, user.ID)
 	if err != nil {
 		return err
 	}

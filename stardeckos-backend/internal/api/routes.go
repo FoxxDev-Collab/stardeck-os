@@ -38,10 +38,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	authProtected.DELETE("/sessions/:id", revokeSession)
 
 	// User management routes (requires wheel group or root for PAM users, admin for local users)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage users
 	users := api.Group("/users")
 	users.Use(auth.RequireAuth(authSvc))
-	users.Use(auth.RequireSystemUser())
 	users.Use(auth.RequireWheelOrRoot(authSvc))
 	users.GET("", listUsersHandler)
 	users.POST("", createUserHandler)
@@ -50,10 +48,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	users.DELETE("/:id", deleteUserHandler)
 
 	// Group management routes (requires wheel group or root)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage groups
 	groups := api.Group("/groups")
 	groups.Use(auth.RequireAuth(authSvc))
-	groups.Use(auth.RequireSystemUser())
 	groups.Use(auth.RequireWheelOrRoot(authSvc))
 	groups.GET("", listGroupsHandler)
 	groups.POST("", createGroupHandler)
@@ -65,10 +61,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	groups.GET("/:id/members", listGroupMembersHandler)
 
 	// Realm management routes (requires wheel group or root)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage realms
 	realms := api.Group("/realms")
 	realms.Use(auth.RequireAuth(authSvc))
-	realms.Use(auth.RequireSystemUser())
 	realms.Use(auth.RequireWheelOrRoot(authSvc))
 	realms.GET("", listRealmsHandler)
 	realms.POST("", createRealmHandler)
@@ -76,74 +70,58 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	realms.PUT("/:id", updateRealmHandler)
 	realms.DELETE("/:id", deleteRealmHandler)
 
-	// System routes (authenticated)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot access system information
+	// System routes (authenticated, admin for critical operations)
 	system := api.Group("/system")
 	system.Use(auth.RequireAuth(authSvc))
-	system.Use(auth.RequireSystemUser())
 	system.GET("/resources", getResourcesHandler)
 	system.GET("/info", getSystemInfoHandler)
 	system.GET("/groups", listSystemGroupsHandler) // View system groups
 	system.POST("/reboot", rebootSystemHandler, auth.RequireRole(models.RoleAdmin))
 
 	// Process routes (authenticated, kill requires operator+)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage processes
 	processes := api.Group("/processes")
 	processes.Use(auth.RequireAuth(authSvc))
-	processes.Use(auth.RequireSystemUser())
 	processes.GET("", listProcesses)
 	processes.DELETE("/:pid", killProcess, auth.RequireOperatorOrAdmin())
 
 	// Service routes (authenticated, actions require operator+)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage services
 	services := api.Group("/services")
 	services.Use(auth.RequireAuth(authSvc))
-	services.Use(auth.RequireSystemUser())
 	services.GET("", listServices)
 	services.GET("/:name", getService)
 	services.POST("/:name/:action", serviceAction, auth.RequireOperatorOrAdmin())
 
 	// Update routes (authenticated, apply requires admin)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage updates
 	updates := api.Group("/updates")
 	updates.Use(auth.RequireAuth(authSvc))
-	updates.Use(auth.RequireSystemUser())
 	updates.GET("/available", getAvailableUpdates)
 	updates.POST("/apply", applyUpdates, auth.RequireRole(models.RoleAdmin))
 	updates.GET("/history", getUpdateHistory)
 
 	// Repository routes (authenticated, requires wheel/root)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage repositories
 	repos := api.Group("/repositories")
 	repos.Use(auth.RequireAuth(authSvc))
-	repos.Use(auth.RequireSystemUser())
 	repos.GET("", getRepositoriesHandler, auth.RequireWheelOrRoot(authSvc))
 	repos.POST("", addRepositoryHandler, auth.RequireWheelOrRoot(authSvc))
 	repos.PUT("/:id", updateRepositoryHandler, auth.RequireWheelOrRoot(authSvc))
 	repos.DELETE("/:id", deleteRepositoryHandler, auth.RequireWheelOrRoot(authSvc))
 
 	// Package routes (authenticated, requires wheel/root for install/remove)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage packages
 	packages := api.Group("/packages")
 	packages.Use(auth.RequireAuth(authSvc))
-	packages.Use(auth.RequireSystemUser())
 	packages.GET("/search", searchPackagesHandler)
 	packages.GET("/:name", getPackageInfoHandler)
 	packages.POST("/install", installPackagesHandler, auth.RequireWheelOrRoot(authSvc))
 	packages.POST("/remove", removePackagesHandler, auth.RequireWheelOrRoot(authSvc))
 
 	// Metadata routes (authenticated, requires wheel/root)
-	// RESTRICTED TO SYSTEM USERS ONLY
 	metadata := api.Group("/metadata")
 	metadata.Use(auth.RequireAuth(authSvc))
-	metadata.Use(auth.RequireSystemUser())
 	metadata.POST("/refresh", refreshMetadataHandler, auth.RequireWheelOrRoot(authSvc))
 
 	// Storage routes (authenticated, read-only for viewing, wheel/root for management)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot view or manage storage
 	storage := api.Group("/storage")
 	storage.Use(auth.RequireAuth(authSvc))
-	storage.Use(auth.RequireSystemUser())
 	storage.GET("/disks", getDisks)
 	storage.GET("/mounts", getMounts)
 	storage.GET("/lvm", getLVM)
@@ -172,10 +150,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	files.PATCH("/permissions", changePermissionsHandler)
 
 	// Audit log routes (requires admin)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot view audit logs
 	audit := api.Group("/audit")
 	audit.Use(auth.RequireAuth(authSvc))
-	audit.Use(auth.RequireSystemUser())
 	audit.Use(auth.RequireRole(models.RoleAdmin))
 	audit.GET("", listAuditLogsHandler)
 	audit.GET("/actions", getAuditActionsHandler)
@@ -189,18 +165,16 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	api.GET("/packages/ws", HandlePackageOperationWebSocket)
 
 	// Network management routes
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage network
 	network := api.Group("/network")
 	network.Use(auth.RequireAuth(authSvc))
-	network.Use(auth.RequireSystemUser())
 
-	// Interface routes (read: all system users, write: admin only)
+	// Interface routes (read: all users, write: admin only)
 	network.GET("/interfaces", listInterfacesHandler)
 	network.GET("/interfaces/:name", getInterfaceHandler)
 	network.GET("/interfaces/:name/stats", getInterfaceStatsHandler)
 	network.POST("/interfaces/:name/state", setInterfaceStateHandler, auth.RequireRole(models.RoleAdmin))
 
-	// Firewall routes (read: all system users, write: admin only)
+	// Firewall routes (read: all users, write: admin only)
 	network.GET("/firewall/status", getFirewallStatusHandler)
 	network.GET("/firewall/zones", listFirewallZonesHandler)
 	network.GET("/firewall/zones/:zone", getFirewallZoneHandler)
@@ -216,7 +190,7 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	network.POST("/firewall/reload", reloadFirewallHandler, auth.RequireRole(models.RoleAdmin))
 	network.POST("/firewall/default-zone", setDefaultZoneHandler, auth.RequireRole(models.RoleAdmin))
 
-	// Route management (read: all system users, write: admin only)
+	// Route management (read: all users, write: admin only)
 	network.GET("/routes", listRoutesHandler)
 	network.POST("/routes", addRouteHandler, auth.RequireRole(models.RoleAdmin))
 	network.DELETE("/routes/:destination", deleteRouteHandler, auth.RequireRole(models.RoleAdmin))
@@ -234,10 +208,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	api.GET("/ports/used", listUsedPortsHandler, auth.RequireAuth(authSvc))
 
 	// Container management routes (Phase 2B)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage containers
 	containers := api.Group("/containers")
 	containers.Use(auth.RequireAuth(authSvc))
-	containers.Use(auth.RequireSystemUser())
 
 	// Podman availability check
 	containers.GET("/check", checkPodmanHandler)
@@ -245,7 +217,7 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Podman installation WebSocket (admin only)
 	containers.GET("/install", installPodmanHandler)
 
-	// Container operations (read: all system users, write: operator+, create/delete: admin)
+	// Container operations (read: all, write: operator+, create/delete: admin)
 	containers.GET("", listContainersHandler)
 	containers.GET("/:id", getContainerHandler)
 	containers.POST("", createContainerHandler, auth.RequireRole(models.RoleAdmin))
@@ -267,7 +239,6 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Image management (read: all, write: admin)
 	images := api.Group("/images")
 	images.Use(auth.RequireAuth(authSvc))
-	images.Use(auth.RequireSystemUser())
 	images.GET("", listImagesHandler)
 	images.POST("/pull", pullImageHandler, auth.RequireRole(models.RoleAdmin))
 	images.DELETE("/:id", removeImageHandler, auth.RequireRole(models.RoleAdmin))
@@ -275,7 +246,6 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Volume management (read: all, write: admin)
 	volumes := api.Group("/volumes")
 	volumes.Use(auth.RequireAuth(authSvc))
-	volumes.Use(auth.RequireSystemUser())
 	volumes.GET("", listVolumesHandler)
 	volumes.POST("", createVolumeHandler, auth.RequireRole(models.RoleAdmin))
 	volumes.DELETE("/:name", removeVolumeHandler, auth.RequireRole(models.RoleAdmin))
@@ -283,7 +253,6 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Podman network management (read: all, write: admin)
 	podmanNetworks := api.Group("/podman-networks")
 	podmanNetworks.Use(auth.RequireAuth(authSvc))
-	podmanNetworks.Use(auth.RequireSystemUser())
 	podmanNetworks.GET("", listPodmanNetworksHandler)
 	podmanNetworks.POST("", createPodmanNetworkHandler, auth.RequireRole(models.RoleAdmin))
 	podmanNetworks.DELETE("/:name", removePodmanNetworkHandler, auth.RequireRole(models.RoleAdmin))
@@ -291,17 +260,14 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Template management (read: all, write: admin)
 	templates := api.Group("/templates")
 	templates.Use(auth.RequireAuth(authSvc))
-	templates.Use(auth.RequireSystemUser())
 	templates.GET("", listTemplatesHandler)
 	templates.GET("/:id", getTemplateHandler)
 	templates.POST("", createTemplateHandler, auth.RequireRole(models.RoleAdmin))
 	templates.DELETE("/:id", deleteTemplateHandler, auth.RequireRole(models.RoleAdmin))
 
 	// Stack management (compose-based deployments)
-	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage stacks
 	stacks := api.Group("/stacks")
 	stacks.Use(auth.RequireAuth(authSvc))
-	stacks.Use(auth.RequireSystemUser())
 	stacks.GET("", listStacksHandler)
 	stacks.GET("/:id", getStackHandler)
 	stacks.GET("/:id/containers", getStackContainersHandler)
@@ -315,5 +281,5 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	stacks.GET("/:id/pull", pullStackHandler, auth.RequireRole(models.RoleAdmin)) // WebSocket
 
 	// Desktop apps endpoint (containers with web UIs)
-	api.GET("/desktop-apps", listDesktopAppsHandler, auth.RequireAuth(authSvc), auth.RequireSystemUser())
+	api.GET("/desktop-apps", listDesktopAppsHandler, auth.RequireAuth(authSvc))
 }

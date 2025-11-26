@@ -19,6 +19,7 @@ interface User {
   disabled: boolean;
   created_at: string;
   last_login?: string;
+  is_pam_admin?: boolean; // True if PAM user is in wheel/sudo group or is root
 }
 
 interface Group {
@@ -67,6 +68,12 @@ export default function UserManagerPage() {
   const [userGroups, setUserGroups] = useState<number[]>([]);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+
+  // Edit user state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState<{ display_name: string; password: string; role: "admin" | "operator" | "viewer" }>({ display_name: "", password: "", role: "viewer" });
+  const [isEditing, setIsEditing] = useState(false);
 
   const fetchUsers = useCallback(async () => {
     if (!token) return;
@@ -294,6 +301,67 @@ export default function UserManagerPage() {
     }
   };
 
+  const openEditModal = (user: User) => {
+    setEditUser(user);
+    setEditForm({
+      display_name: user.display_name,
+      password: "",
+      role: user.role,
+    });
+    setShowEditModal(true);
+  };
+
+  const closeEditModal = () => {
+    setShowEditModal(false);
+    setEditUser(null);
+    setEditForm({ display_name: "", password: "", role: "viewer" });
+  };
+
+  const handleEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !editUser) return;
+
+    // Validate password if provided
+    if (editForm.password && !validatePassword(editForm.password).valid) {
+      alert("Password does not meet complexity requirements");
+      return;
+    }
+
+    setIsEditing(true);
+    try {
+      const updateData: { display_name: string; role: string; password?: string } = {
+        display_name: editForm.display_name,
+        role: editForm.role,
+      };
+
+      // Only include password if it was changed
+      if (editForm.password) {
+        updateData.password = editForm.password;
+      }
+
+      const response = await fetch(`/api/users/${editUser.id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update user");
+      }
+
+      await fetchUsers();
+      closeEditModal();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to update user");
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
   return (
     <DashboardLayout title="USER MANAGER" time={time}>
       <div className="p-6 space-y-6">
@@ -497,6 +565,16 @@ export default function UserManagerPage() {
                               ADMIN
                             </span>
                           )}
+                          {user.is_pam_admin && (
+                            <span className="px-2 py-0.5 rounded text-xs bg-chart-2/10 border border-chart-2/30 text-chart-2">
+                              SUDO
+                            </span>
+                          )}
+                          {user.auth_type === "pam" && (
+                            <span className="px-2 py-0.5 rounded text-xs bg-chart-4/10 border border-chart-4/30 text-chart-4">
+                              PAM
+                            </span>
+                          )}
                           {user.disabled && (
                             <span className="px-2 py-0.5 rounded text-xs bg-destructive/10 border border-destructive/30 text-destructive">
                               DISABLED
@@ -536,7 +614,12 @@ export default function UserManagerPage() {
                       >
                         {user.disabled ? "Enable" : "Disable"}
                       </Button>
-                      <Button variant="outline" size="sm" className="gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEditModal(user)}
+                        className="gap-2"
+                      >
                         <Edit className="w-3 h-3" />
                         Edit
                       </Button>
@@ -629,6 +712,124 @@ export default function UserManagerPage() {
                   Done
                 </Button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit User Modal */}
+        {showEditModal && editUser && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md mx-4">
+              <div className="flex items-center justify-between p-4 border-b border-border">
+                <div>
+                  <h2 className="text-lg font-semibold">Edit User</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Editing {editUser.username}
+                    {editUser.auth_type === "pam" && (
+                      <span className="ml-2 px-2 py-0.5 rounded text-xs bg-chart-4/10 border border-chart-4/30 text-chart-4">
+                        PAM User
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={closeEditModal}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <form onSubmit={handleEditUser} className="p-4 space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_display_name">Display Name</Label>
+                  <Input
+                    id="edit_display_name"
+                    value={editForm.display_name}
+                    onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit_role">Role</Label>
+                  <select
+                    id="edit_role"
+                    value={editForm.role}
+                    onChange={(e) => setEditForm({ ...editForm, role: e.target.value as "admin" | "operator" | "viewer" })}
+                    className="w-full h-10 px-3 rounded-md border border-border bg-input text-foreground"
+                  >
+                    <option value="viewer">Viewer (Read-only)</option>
+                    <option value="operator">Operator (View + Control)</option>
+                    <option value="admin">Administrator (Full Access)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {editForm.role === "admin" && "Full system access including user management"}
+                    {editForm.role === "operator" && "Can view and control services, but cannot modify settings"}
+                    {editForm.role === "viewer" && "Read-only access to dashboards and logs"}
+                  </p>
+                  {editUser.is_pam_admin && (
+                    <p className="text-xs text-chart-2">
+                      Note: This user is in the wheel/sudo group and has system admin privileges regardless of role.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit_password">New Password (leave empty to keep current)</Label>
+                  <Input
+                    id="edit_password"
+                    type="password"
+                    placeholder="Enter new password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  />
+                  {editForm.password && (
+                    <div className="space-y-1">
+                      {(() => {
+                        const { valid, errors } = validatePassword(editForm.password);
+                        if (valid) {
+                          return (
+                            <p className="text-xs text-green-500 flex items-center gap-1">
+                              <Check className="w-3 h-3" /> Password meets requirements
+                            </p>
+                          );
+                        }
+                        return (
+                          <div className="text-xs text-muted-foreground">
+                            <p className="mb-1">Required:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                              {errors.map((err, i) => (
+                                <li key={i} className="text-destructive/80">{err}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={closeEditModal}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    className="bg-accent hover:bg-accent/90"
+                    disabled={isEditing || !editForm.display_name || (editForm.password.length > 0 && !validatePassword(editForm.password).valid)}
+                  >
+                    {isEditing ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
+              </form>
             </div>
           </div>
         )}

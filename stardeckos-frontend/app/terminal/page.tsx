@@ -22,11 +22,16 @@ export default function TerminalPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTerminalReady, setIsTerminalReady] = useState(false);
 
+  // Check if user has permission (operator or admin)
+  const hasPermission = user?.role === "admin" || user?.role === "operator" || user?.is_pam_admin;
+
   useEffect(() => {
     if (!isLoading && !user) {
       router.push("/login");
+    } else if (!isLoading && user && !hasPermission) {
+      router.push("/dashboard");
     }
-  }, [user, isLoading, router]);
+  }, [user, isLoading, hasPermission, router]);
 
   useEffect(() => {
     if (!terminalRef.current || !user) return;
@@ -211,7 +216,7 @@ export default function TerminalPage() {
     window.location.reload();
   };
 
-  if (isLoading) {
+  if (isLoading || !user || !hasPermission) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-full">
@@ -219,10 +224,6 @@ export default function TerminalPage() {
         </div>
       </DashboardLayout>
     );
-  }
-
-  if (!user) {
-    return null;
   }
 
   return (

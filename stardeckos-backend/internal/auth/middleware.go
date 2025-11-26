@@ -98,13 +98,15 @@ func RequireWheelOrRoot(authSvc *Service) echo.MiddlewareFunc {
 						"error": "requires wheel group membership or root access",
 					})
 				}
-			} else {
-				// For local users, require admin role
-				if user.Role != models.RoleAdmin {
-					return c.JSON(http.StatusForbidden, map[string]string{
-						"error": "requires administrator privileges",
-					})
-				}
+				// User is a PAM admin, allow access
+				return next(c)
+			}
+
+			// For local users, require admin role
+			if user.Role != models.RoleAdmin {
+				return c.JSON(http.StatusForbidden, map[string]string{
+					"error": "requires administrator privileges",
+				})
 			}
 
 			return next(c)
@@ -112,9 +114,9 @@ func RequireWheelOrRoot(authSvc *Service) echo.MiddlewareFunc {
 	}
 }
 
-// RequireSystemUser middleware restricts access to system users only
-// Web users are blocked from system administration features
-func RequireSystemUser() echo.MiddlewareFunc {
+// RequireAdminOrPAMAdmin middleware checks if the user is an admin (either by role or PAM group)
+// This replaces the old RequireSystemUser middleware
+func RequireAdminOrPAMAdmin(authSvc *Service) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			user, ok := c.Get(ContextKeyUser).(*models.User)
@@ -124,14 +126,22 @@ func RequireSystemUser() echo.MiddlewareFunc {
 				})
 			}
 
-			// Only system users can access this endpoint
-			if !user.IsSystemUser() {
-				return c.JSON(http.StatusForbidden, map[string]string{
-					"error": "access denied: system administrator privileges required",
-				})
+			// Check if user is a PAM admin
+			if user.AuthType == models.AuthTypePAM {
+				pamAuth := NewPAMAuth()
+				if pamAuth.IsAdmin(user.Username) {
+					return next(c)
+				}
 			}
 
-			return next(c)
+			// Check if user has admin role
+			if user.Role == models.RoleAdmin {
+				return next(c)
+			}
+
+			return c.JSON(http.StatusForbidden, map[string]string{
+				"error": "requires administrator privileges",
+			})
 		}
 	}
 }

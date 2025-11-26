@@ -22,26 +22,27 @@ const maxPreviewSize = 1024 * 1024
 const maxUploadSize = 100 * 1024 * 1024
 
 // validateFilePath checks if a web user is allowed to access the given path
-// Web users can only access /home/<username>/ directory
-// System users have full access
+// validateFilePath checks if a user has access to a given path
+// Admin users have full access
+// Non-admin users can only access /home/<username>/ directory
 func validateFilePath(c echo.Context, path string) error {
 	user := auth.GetUserFromContext(c)
 	if user == nil {
 		return fmt.Errorf("authentication required")
 	}
 
-	// System users have unrestricted access
-	if user.IsSystemUser() {
+	// Admin users (including PAM admins) have unrestricted access
+	if user.IsAdmin() {
 		return nil
 	}
 
-	// Web users are restricted to their home directory
+	// Non-admin users are restricted to their home directory
 	cleanPath := filepath.Clean(path)
 	userHomeDir := filepath.Join("/home", user.Username)
 
 	// Check if the path is within the user's home directory
 	if !strings.HasPrefix(cleanPath, userHomeDir) {
-		return fmt.Errorf("access denied: web users can only access their home directory")
+		return fmt.Errorf("access denied: non-admin users can only access their home directory")
 	}
 
 	return nil

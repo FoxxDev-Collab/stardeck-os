@@ -13,6 +13,7 @@ interface User {
   created_at: string;
   updated_at: string;
   last_login?: string;
+  is_pam_admin?: boolean; // True if PAM user is in wheel/sudo group or is root
 }
 
 interface AuthContextType {
