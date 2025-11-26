@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useSettings } from "@/lib/settings-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Box,
   Play,
@@ -49,6 +52,10 @@ import {
   Terminal,
   Package,
   Layers,
+  Settings,
+  FolderOpen,
+  ShieldAlert,
+  Pencil,
 } from "lucide-react";
 
 interface Container {
@@ -87,6 +94,14 @@ interface Volume {
   created_at: string;
 }
 
+interface BindMount {
+  host_path: string;
+  container_path: string;
+  container_id: string;
+  container_name: string;
+  rw: boolean;
+}
+
 interface PodmanNetwork {
   id: string;
   name: string;
@@ -119,8 +134,10 @@ interface InstallMessage {
 
 export default function ContainerManagerPage() {
   const { isAuthenticated, isLoading, token, user } = useAuth();
+  const { settings, updateContainerSettings } = useSettings();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [podmanAvailable, setPodmanAvailable] = useState<boolean | null>(null);
 
   // Check if user has permission (operator or admin)
@@ -142,6 +159,7 @@ export default function ContainerManagerPage() {
   const [containers, setContainers] = useState<Container[]>([]);
   const [images, setImages] = useState<ContainerImage[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [bindMounts, setBindMounts] = useState<BindMount[]>([]);
   const [networks, setNetworks] = useState<PodmanNetwork[]>([]);
 
   // UI states
@@ -158,6 +176,11 @@ export default function ContainerManagerPage() {
   const [selectedContainerForLogs, setSelectedContainerForLogs] = useState<string | null>(null);
   const [selectedContainerForTerminal, setSelectedContainerForTerminal] = useState<string | null>(null);
   const [selectedContainer, setSelectedContainer] = useState<Container | null>(null);
+
+  // Create Volume dialog state
+  const [showCreateVolumeDialog, setShowCreateVolumeDialog] = useState(false);
+  const [newVolumeName, setNewVolumeName] = useState("");
+  const [creatingVolume, setCreatingVolume] = useState(false);
 
   // Create container form
   const [newContainer, setNewContainer] = useState({
@@ -311,6 +334,20 @@ export default function ContainerManagerPage() {
     }
   }, [token]);
 
+  const fetchBindMounts = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/bind-mounts", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to fetch bind mounts");
+      const data = await response.json();
+      setBindMounts(data || []);
+    } catch (err) {
+      console.error("Failed to load bind mounts:", err);
+    }
+  }, [token]);
+
   const fetchNetworks = useCallback(async () => {
     if (!token) return;
     try {
@@ -349,6 +386,7 @@ export default function ContainerManagerPage() {
       fetchContainers();
       fetchImages();
       fetchVolumes();
+      fetchBindMounts();
       fetchNetworks();
 
       const interval = setInterval(() => {
@@ -356,7 +394,7 @@ export default function ContainerManagerPage() {
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, token, checkPodman, fetchContainers, fetchImages, fetchVolumes, fetchNetworks]);
+  }, [isAuthenticated, token, checkPodman, fetchContainers, fetchImages, fetchVolumes, fetchBindMounts, fetchNetworks]);
 
   if (isLoading || !isAuthenticated || !hasPermission) {
     return (
@@ -499,6 +537,35 @@ export default function ContainerManagerPage() {
       await fetchVolumes();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to remove volume");
+    }
+  };
+
+  const handleCreateVolume = async () => {
+    if (!token || !newVolumeName.trim()) return;
+
+    setCreatingVolume(true);
+    try {
+      const response = await fetch("/api/volumes", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: newVolumeName.trim() }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to create volume");
+      }
+
+      setShowCreateVolumeDialog(false);
+      setNewVolumeName("");
+      await fetchVolumes();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to create volume");
+    } finally {
+      setCreatingVolume(false);
     }
   };
 
@@ -801,12 +868,21 @@ export default function ContainerManagerPage() {
                 </select>
               </div>
               {isAdmin && (
-                <Button
-                  onClick={() => router.push("/container-create")}
-                  className="gap-2"
-                >
-                  <Plus className="w-4 h-4" /> Create Container
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowSettingsDialog(true)}
+                    className="gap-2"
+                  >
+                    <Settings className="w-4 h-4" /> Settings
+                  </Button>
+                  <Button
+                    onClick={() => router.push("/container-create")}
+                    className="gap-2"
+                  >
+                    <Plus className="w-4 h-4" /> Create Container
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -944,6 +1020,16 @@ export default function ContainerManagerPage() {
                                 >
                                   <FileText className="w-4 h-4" />
                                 </Button>
+                                {isAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => router.push(`/container-create?edit=${container.container_id}`)}
+                                    title="Edit Container"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                )}
                                 {container.status === "running" && (
                                   <>
                                     <Button
@@ -1004,68 +1090,163 @@ export default function ContainerManagerPage() {
           </TabsContent>
 
           {/* Volumes Tab */}
-          <TabsContent value="volumes" className="space-y-4">
-            <h3 className="text-lg font-semibold">Volumes</h3>
+          <TabsContent value="volumes" className="space-y-6">
+            {/* Bind Mounts Section */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <FolderOpen className="w-5 h-5 text-accent" />
+                Bind Mounts
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Host directories mounted into containers
+              </p>
 
-            <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border/50">
-                        <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Name
-                        </th>
-                        <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Driver
-                        </th>
-                        <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Mount Point
-                        </th>
-                        <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {volumes.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="p-8 text-center text-muted-foreground">
-                            No volumes found
-                          </td>
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border/50">
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Host Path
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Container Path
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Container
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Mode
+                          </th>
                         </tr>
-                      ) : (
-                        volumes.map((volume) => (
-                          <tr
-                            key={volume.name}
-                            className="border-b border-border/30 hover:bg-accent/5 transition-colors"
-                          >
-                            <td className="p-4 font-medium">{volume.name}</td>
-                            <td className="p-4">{volume.driver}</td>
-                            <td className="p-4 text-sm font-mono text-muted-foreground">
-                              {volume.mount_point}
-                            </td>
-                            <td className="p-4">
-                              {isAdmin && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleRemoveVolume(volume.name)}
-                                  className="text-destructive hover:text-destructive"
-                                  title="Remove"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              )}
+                      </thead>
+                      <tbody>
+                        {bindMounts.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="p-8 text-center text-muted-foreground">
+                              No bind mounts found
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ) : (
+                          bindMounts.map((mount, index) => (
+                            <tr
+                              key={`${mount.container_id}-${mount.host_path}-${index}`}
+                              className="border-b border-border/30 hover:bg-accent/5 transition-colors"
+                            >
+                              <td className="p-4 text-sm font-mono text-muted-foreground">
+                                {mount.host_path}
+                              </td>
+                              <td className="p-4 text-sm font-mono text-muted-foreground">
+                                {mount.container_path}
+                              </td>
+                              <td className="p-4">
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-accent/10 text-accent">
+                                  {mount.container_name}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  mount.rw
+                                    ? "bg-primary/20 text-primary"
+                                    : "bg-muted text-muted-foreground"
+                                }`}>
+                                  {mount.rw ? "RW" : "RO"}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Podman Volumes Section */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <HardDrive className="w-5 h-5 text-accent" />
+                    Podman Volumes
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Managed storage volumes created with Podman
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
+                {isAdmin && (
+                  <Button
+                    size="sm"
+                    onClick={() => setShowCreateVolumeDialog(true)}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Volume
+                  </Button>
+                )}
+              </div>
+
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border/50">
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Name
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Driver
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Mount Point
+                          </th>
+                          <th className="text-left p-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {volumes.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="p-8 text-center text-muted-foreground">
+                              No Podman volumes found
+                            </td>
+                          </tr>
+                        ) : (
+                          volumes.map((volume) => (
+                            <tr
+                              key={volume.name}
+                              className="border-b border-border/30 hover:bg-accent/5 transition-colors"
+                            >
+                              <td className="p-4 font-medium">{volume.name}</td>
+                              <td className="p-4">{volume.driver}</td>
+                              <td className="p-4 text-sm font-mono text-muted-foreground">
+                                {volume.mount_point}
+                              </td>
+                              <td className="p-4">
+                                {isAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleRemoveVolume(volume.name)}
+                                    className="text-destructive hover:text-destructive"
+                                    title="Remove"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* Networks Tab */}
@@ -1258,6 +1439,200 @@ export default function ContainerManagerPage() {
           setSelectedContainer(null);
         }}
       />
+
+      {/* Container Settings Dialog */}
+      <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="w-5 h-5 text-accent" />
+              Container Settings
+            </DialogTitle>
+            <DialogDescription>
+              Configure default settings for container creation
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* Default Volume Path */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-accent" />
+                <Label className="font-medium">Default Volume Path</Label>
+              </div>
+              <Input
+                placeholder="/mnt/data/containers"
+                value={settings.container.defaultVolumePath}
+                onChange={(e) => updateContainerSettings({ defaultVolumePath: e.target.value })}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">
+                Base path for volume mounts. Leave empty to enter paths manually.
+              </p>
+              {settings.container.defaultVolumePath && (
+                <div className="p-2 bg-muted/50 rounded text-xs font-mono">
+                  Example: {settings.container.defaultVolumePath}/postgres/data
+                </div>
+              )}
+            </div>
+
+            {/* Restart Policy & Network Mode */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Default Restart Policy</Label>
+                <Select
+                  value={settings.container.defaultRestartPolicy}
+                  onValueChange={(value) => updateContainerSettings({ defaultRestartPolicy: value as "no" | "always" | "unless-stopped" | "on-failure" })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="no">No (manual)</SelectItem>
+                    <SelectItem value="always">Always</SelectItem>
+                    <SelectItem value="unless-stopped">Unless Stopped</SelectItem>
+                    <SelectItem value="on-failure">On Failure</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Default Network Mode</Label>
+                <Select
+                  value={settings.container.defaultNetworkMode}
+                  onValueChange={(value) => updateContainerSettings({ defaultNetworkMode: value as "bridge" | "host" | "none" })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bridge">Bridge (isolated)</SelectItem>
+                    <SelectItem value="host">Host (shared)</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Toggle Options */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Play className="w-4 h-4 text-green-500" />
+                  <div>
+                    <Label className="font-medium">Auto-start Containers</Label>
+                    <p className="text-xs text-muted-foreground">Start containers after creation</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={settings.container.autoStartContainers}
+                  onCheckedChange={(checked) => updateContainerSettings({ autoStartContainers: checked })}
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <ShieldAlert className="w-4 h-4 text-destructive" />
+                  <div>
+                    <Label className="font-medium">Privileged Mode Default</Label>
+                    <p className="text-xs text-muted-foreground">Not recommended</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={settings.container.enablePrivilegedByDefault}
+                  onCheckedChange={(checked) => updateContainerSettings({ enablePrivilegedByDefault: checked })}
+                />
+              </div>
+
+              {settings.container.enablePrivilegedByDefault && (
+                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+                  <p className="text-xs text-destructive">
+                    Privileged containers have full host access. Use with caution.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSettingsDialog(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Volume Dialog */}
+      <Dialog open={showCreateVolumeDialog} onOpenChange={setShowCreateVolumeDialog}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-accent" />
+              Create Podman Volume
+            </DialogTitle>
+            <DialogDescription>
+              Create a managed volume for persistent container storage
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="volume-name">Volume Name</Label>
+              <Input
+                id="volume-name"
+                placeholder="my-app-data"
+                value={newVolumeName}
+                onChange={(e) => setNewVolumeName(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))}
+                disabled={creatingVolume}
+              />
+              <p className="text-xs text-muted-foreground">
+                Only letters, numbers, underscores, and hyphens allowed
+              </p>
+            </div>
+
+            <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+              <div className="flex items-center gap-2 text-sm">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span>Managed by Podman</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span>Data persists across container restarts</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span>Easy backup and migration</span>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCreateVolumeDialog(false);
+                setNewVolumeName("");
+              }}
+              disabled={creatingVolume}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateVolume}
+              disabled={!newVolumeName.trim() || creatingVolume}
+            >
+              {creatingVolume ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                "Create Volume"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

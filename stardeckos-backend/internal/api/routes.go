@@ -252,6 +252,9 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	volumes.POST("", createVolumeHandler, auth.RequireRole(models.RoleAdmin))
 	volumes.DELETE("/:name", removeVolumeHandler, auth.RequireRole(models.RoleAdmin))
 
+	// Bind mounts endpoint (aggregates bind mounts from all containers)
+	api.GET("/bind-mounts", listBindMountsHandler, auth.RequireAuth(authSvc))
+
 	// Podman network management (read: all, write: admin)
 	podmanNetworks := api.Group("/podman-networks")
 	podmanNetworks.Use(auth.RequireAuth(authSvc))

@@ -86,7 +86,7 @@
 - [x] M2B.5: Monaco code editor integration (YAML editor for stacks)
 - [x] M2B.6: Docker Hub image search and browse
 - [x] M2B.7: Environment variable manager with .env import/export
-- [x] M2B.8: Podman volume and network management
+- [x] M2B.8: Podman volume and network management (enhanced with full volume type support)
 - [x] M2B.9: Port usage tracking (shows which containers use which ports)
 - [x] M2B.10: Enhanced port selector with common presets and conflict detection
 - [x] M2B.11: Container stats charts (CPU, memory, network I/O with sparklines)
@@ -239,7 +239,10 @@ The Container Manager provides comprehensive Podman container orchestration:
 - **Podman Integration**: Full container lifecycle management (list, create, start, stop, restart, pause, unpause, remove)
 - **Container Inspection**: Detailed container metadata and runtime information
 - **Image Management**: Pull, list, and remove container images
-- **Volume Management**: Create, list, and remove Podman volumes
+- **Volume Management**:
+    - Create, list, and remove Podman volumes
+    - Bind mounts aggregation API (view all bind mounts across containers)
+    - Full support for both Podman volumes and bind mounts in container creation
 - **Network Management**: List Podman networks and connections
 - **Stack Management**: Docker Compose/Podman Compose file deployment
 - **WebSocket Terminals**: Real-time shell access to running containers
@@ -251,7 +254,7 @@ The Container Manager provides comprehensive Podman container orchestration:
 - **5-Tab Interface**:
   - **Containers**: List all containers with status, stats, and quick actions
   - **Images**: Browse images with pull/delete capabilities, Docker Hub search
-  - **Volumes**: Manage persistent storage volumes
+  - **Volumes**: Two-section view with Bind Mounts and Podman Volumes, create volume dialog
   - **Networks**: View network configurations
   - **Stacks**: Deploy and manage multi-container applications via compose files
 
@@ -269,7 +272,13 @@ The Container Manager provides comprehensive Podman container orchestration:
     - Real-time port conflict detection
     - Hover tooltips showing which container uses each port
     - Visual indicators for ports already in use
-  - **Volume Management**: Host path mounting with read-only option
+  - **Volume Management**:
+    - Volume type selector (Podman Volume vs Bind Mount)
+    - Podman volumes (recommended): managed storage with better isolation and portability
+    - Bind mounts: direct host directory access for config files or shared data
+    - Dropdown to select from existing volumes
+    - Auto-creation of named volumes during container deployment
+    - Read-only mount option
   - **Environment Variables**: Add individually or import/export .env files
   - **Advanced Settings**: CPU/memory limits, custom commands, entrypoints, working directory, user, hostname
   - **5-Tab Configuration**: Basic, Ports, Volumes, Environment, Advanced

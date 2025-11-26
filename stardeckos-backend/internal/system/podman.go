@@ -69,12 +69,7 @@ type podmanContainer struct {
 		Protocol      string `json:"protocol"`
 	} `json:"Ports"`
 	Labels map[string]string `json:"Labels"`
-	Mounts []struct {
-		Type        string `json:"Type"`
-		Source      string `json:"Source"`
-		Destination string `json:"Destination"`
-		RW          bool   `json:"RW"`
-	} `json:"Mounts"`
+	Mounts json.RawMessage    `json:"Mounts"` // Can be string or array, ignored in list
 }
 
 // ListContainers returns all containers (running and stopped)

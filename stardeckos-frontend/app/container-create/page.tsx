@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useSettings } from "@/lib/settings-context";
 import { DashboardLayout } from "@/components/dashboard-layout";
@@ -55,9 +55,17 @@ interface PortMapping {
 }
 
 interface VolumeMount {
-  hostPath: string;
+  type: "bind" | "volume";  // bind = host path, volume = podman volume
+  hostPath: string;         // Used for bind mounts
+  volumeName: string;       // Used for podman volumes
   containerPath: string;
   readOnly: boolean;
+}
+
+interface PodmanVolume {
+  name: string;
+  driver: string;
+  mount_point: string;
 }
 
 interface EnvVar {
@@ -102,11 +110,18 @@ interface ImageConfig {
   cmd: string[];
 }
 
-export default function ContainerCreatePage() {
+function ContainerCreateContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { token } = useAuth();
   const { settings } = useSettings();
   const deployOutputRef = useRef<HTMLDivElement>(null);
+
+  // Edit mode state
+  const editContainerId = searchParams.get("edit");
+  const isEditMode = !!editContainerId;
+  const [isLoadingContainer, setIsLoadingContainer] = useState(false);
+  const [originalContainerName, setOriginalContainerName] = useState("");
 
   // Basic settings - use container defaults from settings
   const [containerName, setContainerName] = useState("");
@@ -127,9 +142,12 @@ export default function ContainerCreatePage() {
   
   // Volume mounts
   const [volumes, setVolumes] = useState<VolumeMount[]>([]);
+  const [newVolumeType, setNewVolumeType] = useState<"bind" | "volume">("volume");
+  const [newVolumeName, setNewVolumeName] = useState("");
   const [newHostPath, setNewHostPath] = useState("");
   const [newContainerPath, setNewContainerPath] = useState("");
   const [newReadOnly, setNewReadOnly] = useState(false);
+  const [podmanVolumes, setPodmanVolumes] = useState<PodmanVolume[]>([]);
   
   // Environment variables
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
@@ -167,6 +185,25 @@ export default function ContainerCreatePage() {
   const [imageFound, setImageFound] = useState<boolean | null>(null);
   const inspectOutputRef = useRef<HTMLDivElement>(null);
 
+  // Fetch available Podman volumes
+  useEffect(() => {
+    const fetchVolumes = async () => {
+      if (!token) return;
+      try {
+        const response = await fetch("/api/volumes", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setPodmanVolumes(data || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch volumes:", err);
+      }
+    };
+    fetchVolumes();
+  }, [token]);
+
   // Auto-scroll deploy output
   useEffect(() => {
     if (deployOutputRef.current) {
@@ -180,6 +217,147 @@ export default function ContainerCreatePage() {
       inspectOutputRef.current.scrollTop = inspectOutputRef.current.scrollHeight;
     }
   }, [inspectOutput]);
+
+  // Load existing container configuration in edit mode
+  useEffect(() => {
+    if (!editContainerId || !token) return;
+
+    const loadContainerConfig = async () => {
+      setIsLoadingContainer(true);
+      setError(null);
+
+      try {
+        const response = await fetch(`/api/containers/${editContainerId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to load container configuration");
+        }
+
+        const data = await response.json();
+
+        // Set basic settings
+        const name = data.name?.replace(/^\//, "") || "";
+        setContainerName(name);
+        setOriginalContainerName(name);
+
+        // Parse image name and tag
+        const imageWithTag = data.image || "";
+        const lastColon = imageWithTag.lastIndexOf(":");
+        if (lastColon > 0 && !imageWithTag.substring(lastColon).includes("/")) {
+          setImageName(imageWithTag.substring(0, lastColon));
+          setImageTag(imageWithTag.substring(lastColon + 1));
+        } else {
+          setImageName(imageWithTag);
+          setImageTag("latest");
+        }
+
+        // Set restart policy
+        if (data.restart_policy?.name) {
+          setRestartPolicy(data.restart_policy.name);
+        }
+
+        // Set network mode
+        if (data.network_mode) {
+          setNetworkMode(data.network_mode);
+        }
+
+        // Set hostname
+        if (data.hostname) {
+          setHostname(data.hostname);
+        }
+
+        // Set user
+        if (data.user) {
+          setUser(data.user);
+        }
+
+        // Set working directory
+        if (data.working_dir) {
+          setWorkingDir(data.working_dir);
+        }
+
+        // Parse environment variables
+        if (data.env && Array.isArray(data.env)) {
+          const skipEnvVars = new Set(["PATH", "HOME", "HOSTNAME", "TERM"]);
+          const parsedEnvVars: EnvVar[] = data.env
+            .map((envStr: string) => {
+              const eqIndex = envStr.indexOf("=");
+              if (eqIndex > 0) {
+                return {
+                  key: envStr.substring(0, eqIndex),
+                  value: envStr.substring(eqIndex + 1),
+                };
+              }
+              return null;
+            })
+            .filter((e: EnvVar | null): e is EnvVar => e !== null && !skipEnvVars.has(e.key));
+          setEnvVars(parsedEnvVars);
+        }
+
+        // Parse port bindings
+        if (data.port_bindings) {
+          const parsedPorts: PortMapping[] = [];
+          for (const [containerPortProto, bindings] of Object.entries(data.port_bindings)) {
+            const [containerPort, protocol] = containerPortProto.split("/");
+            if (Array.isArray(bindings)) {
+              for (const binding of bindings as Array<{ HostPort: string }>) {
+                parsedPorts.push({
+                  hostPort: binding.HostPort || containerPort,
+                  containerPort: containerPort,
+                  protocol: (protocol || "tcp") as "tcp" | "udp",
+                });
+              }
+            }
+          }
+          setPorts(parsedPorts);
+        }
+
+        // Parse mounts/volumes
+        if (data.mounts && Array.isArray(data.mounts)) {
+          const parsedVolumes: VolumeMount[] = data.mounts
+            .filter((m: { Type: string }) => m.Type === "bind" || m.Type === "volume")
+            .map((m: { Type: string; Source: string; Destination: string; RW: boolean }) => ({
+              type: m.Type === "volume" ? "volume" as const : "bind" as const,
+              hostPath: m.Type === "bind" ? (m.Source || "") : "",
+              volumeName: m.Type === "volume" ? (m.Source || "") : "",
+              containerPath: m.Destination || "",
+              readOnly: !m.RW,
+            }));
+          setVolumes(parsedVolumes);
+        }
+
+        // Set command (Cmd)
+        if (data.cmd && Array.isArray(data.cmd) && data.cmd.length > 0) {
+          setCommand(data.cmd.join(" "));
+        }
+
+        // Set entrypoint
+        if (data.entrypoint && Array.isArray(data.entrypoint) && data.entrypoint.length > 0) {
+          setEntrypoint(data.entrypoint.join(" "));
+        }
+
+        // Set memory limit (convert from bytes to MB string)
+        if (data.memory_limit && data.memory_limit > 0) {
+          const memoryMB = Math.round(data.memory_limit / (1024 * 1024));
+          setMemoryLimit(`${memoryMB}m`);
+        }
+
+        // Set auto-start from Stardeck metadata
+        if (data.auto_start !== undefined) {
+          setAutoStart(data.auto_start);
+        }
+
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load container");
+      } finally {
+        setIsLoadingContainer(false);
+      }
+    };
+
+    loadContainerConfig();
+  }, [editContainerId, token]);
 
   // Inspect image via WebSocket (with optional pull)
   const inspectImage = (pullIfNeeded: boolean) => {
@@ -278,21 +456,27 @@ export default function ContainerCreatePage() {
       });
     }
 
-    // Apply volumes - use default volume path from settings if available
+    // Apply volumes - default to Podman volumes, with bind mount fallback if path is set
     if (imageConfig.volumes && imageConfig.volumes.length > 0) {
       const defaultBasePath = settings.container.defaultVolumePath;
       // Generate a container-specific subdirectory name from the image name
       const containerSubdir = containerName || imageName.replace(/[^a-zA-Z0-9-_]/g, '-');
 
       const newVolumes: VolumeMount[] = imageConfig.volumes.map(v => {
-        // Create host path: basePath/containerName/last-part-of-container-path
-        // e.g., /mnt/data/containers/postgres/data for /var/lib/postgresql/data
+        // Create volume name from container path (e.g., /var/lib/postgresql/data -> postgres-data)
         const volName = v.split('/').filter(Boolean).pop() || 'data';
+        const suggestedVolumeName = `${containerSubdir}-${volName}`.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+
+        // If default base path is set, use bind mount; otherwise default to Podman volume
+        const useBindMount = !!defaultBasePath;
         const hostPath = defaultBasePath
           ? `${defaultBasePath}/${containerSubdir}/${volName}`
           : "";
+
         return {
-          hostPath,
+          type: useBindMount ? "bind" as const : "volume" as const,
+          hostPath: useBindMount ? hostPath : "",
+          volumeName: useBindMount ? "" : suggestedVolumeName,
           containerPath: v,
           readOnly: false,
         };
@@ -383,7 +567,8 @@ export default function ContainerCreatePage() {
         protocol: p.protocol,
       })),
       volumes: volumes.map(v => ({
-        source: v.hostPath,
+        type: v.type,
+        source: v.type === "bind" ? v.hostPath : v.volumeName,
         target: v.containerPath,
         read_only: v.readOnly,
       })),
@@ -421,8 +606,43 @@ export default function ContainerCreatePage() {
     setDeployComplete(false);
     setDeployError(false);
 
+    // In edit mode, first stop and remove the old container
+    if (isEditMode && editContainerId) {
+      setDeploySteps([{ step: "replace", message: "Stopping old container...", error: false }]);
+
+      try {
+        // Stop the container (ignore errors if it's already stopped)
+        await fetch(`/api/containers/${editContainerId}/stop`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        setDeploySteps([{ step: "replace", message: "Removing old container...", error: false }]);
+
+        // Remove the container
+        const removeResponse = await fetch(`/api/containers/${editContainerId}?force=true`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!removeResponse.ok) {
+          throw new Error("Failed to remove old container");
+        }
+
+        setDeploySteps([{ step: "replace", message: "Old container removed", error: false, complete: true }]);
+      } catch (err) {
+        setDeploySteps(prev => [...prev, {
+          step: "replace",
+          message: `Failed to replace container: ${err instanceof Error ? err.message : "Unknown error"}`,
+          error: true,
+        }]);
+        setDeployError(true);
+        return;
+      }
+    }
+
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProtocol}//localhost:8080/api/containers/deploy`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/containers/deploy`;
 
     const ws = new WebSocket(wsUrl);
 
@@ -528,16 +748,20 @@ export default function ContainerCreatePage() {
   };
 
   // Volume management
-  const addVolume = () => {
-    if (newHostPath && newContainerPath) {
-      setVolumes([...volumes, { 
-        hostPath: newHostPath, 
-        containerPath: newContainerPath, 
-        readOnly: newReadOnly 
+  const addVolume = (type: "bind" | "volume", source: string, containerPath: string, readOnly: boolean) => {
+    if (source && containerPath) {
+      setVolumes([...volumes, {
+        type,
+        hostPath: type === "bind" ? source : "",
+        volumeName: type === "volume" ? source : "",
+        containerPath,
+        readOnly
       }]);
       setNewHostPath("");
       setNewContainerPath("");
       setNewReadOnly(false);
+      setNewVolumeName("");
+      setNewVolumeType("volume");
     }
   };
 
@@ -615,19 +839,30 @@ export default function ContainerCreatePage() {
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold">Create Container</h1>
+              <h1 className="text-2xl font-bold">
+                {isEditMode ? "Edit Container" : "Create Container"}
+              </h1>
               <p className="text-sm text-muted-foreground">
-                Deploy a new container with custom configuration
+                {isEditMode
+                  ? `Editing ${originalContainerName || "container"} - changes will recreate the container`
+                  : "Deploy a new container with custom configuration"
+                }
               </p>
             </div>
+            {isLoadingContainer && (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            )}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => router.push("/container-manager")}>
               Cancel
             </Button>
-            <Button onClick={deployContainer} disabled={isValidating || !imageName || validationResults.some(r => r.status === "error")}>
+            <Button
+              onClick={deployContainer}
+              disabled={isValidating || isLoadingContainer || !imageName || validationResults.some(r => r.status === "error")}
+            >
               <Play className="h-4 w-4 mr-2" />
-              Deploy Container
+              {isEditMode ? "Update Container" : "Deploy Container"}
             </Button>
           </div>
         </div>
@@ -636,6 +871,21 @@ export default function ContainerCreatePage() {
         {error && (
           <div className="mx-6 mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive">
             {error}
+          </div>
+        )}
+
+        {/* Validation errors banner */}
+        {validationResults.some(r => r.status === "error") && (
+          <div className="mx-6 mt-4 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <div className="flex items-center gap-2 text-amber-500 font-medium mb-2">
+              <AlertCircle className="h-4 w-4" />
+              Configuration Issues
+            </div>
+            <ul className="text-sm text-amber-400 space-y-1">
+              {validationResults.filter(r => r.status === "error").map((r, i) => (
+                <li key={i}>• {r.message}: {r.details}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -890,73 +1140,184 @@ export default function ContainerCreatePage() {
                   <CardHeader>
                     <CardTitle>Volume Mounts</CardTitle>
                     <CardDescription>
-                      Mount host directories or volumes into the container
+                      Mount Podman volumes or host directories into the container. Podman volumes are recommended for better isolation and portability.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {/* Add volume */}
-                    <div className="grid grid-cols-12 gap-2">
-                      <div className="col-span-5 space-y-2">
-                        <Label>Host Path</Label>
-                        <Input
-                          placeholder="/host/path"
-                          value={newHostPath}
-                          onChange={(e) => setNewHostPath(e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-5 space-y-2">
-                        <Label>Container Path</Label>
-                        <Input
-                          placeholder="/container/path"
-                          value={newContainerPath}
-                          onChange={(e) => setNewContainerPath(e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-2 space-y-2">
-                        <Label className="invisible">Add</Label>
-                        <Button onClick={addVolume} className="w-full">
-                          <Plus className="h-4 w-4" />
-                        </Button>
+                    {/* Volume type info */}
+                    <div className="p-3 bg-accent/10 border border-accent/20 rounded-lg text-sm">
+                      <div className="flex items-start gap-2">
+                        <Info className="h-4 w-4 text-accent mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="font-medium text-accent">Volume Types</p>
+                          <ul className="mt-1 text-muted-foreground text-xs space-y-1">
+                            <li><strong>Podman Volume</strong> (recommended): Managed storage, better isolation, portable</li>
+                            <li><strong>Bind Mount</strong>: Direct host directory access, for config files or shared data</li>
+                          </ul>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <Label>Read-only mount</Label>
-                      <Switch checked={newReadOnly} onCheckedChange={setNewReadOnly} />
+                    {/* Add volume form */}
+                    <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Volume Type</Label>
+                          <Select value={newVolumeType} onValueChange={(v: "bind" | "volume") => setNewVolumeType(v)}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="volume">Podman Volume</SelectItem>
+                              <SelectItem value="bind">Bind Mount</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Container Path</Label>
+                          <Input
+                            placeholder="/container/path"
+                            value={newContainerPath}
+                            onChange={(e) => setNewContainerPath(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      {newVolumeType === "volume" ? (
+                        <div className="space-y-2">
+                          <Label>Volume Name</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              placeholder="my-volume (will be created if it doesn't exist)"
+                              value={newVolumeName}
+                              onChange={(e) => setNewVolumeName(e.target.value)}
+                              className="flex-1"
+                            />
+                            {podmanVolumes.length > 0 && (
+                              <Select onValueChange={(v) => setNewVolumeName(v)}>
+                                <SelectTrigger className="w-48">
+                                  <SelectValue placeholder="Or select..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {podmanVolumes.map((vol) => (
+                                    <SelectItem key={vol.name} value={vol.name}>
+                                      {vol.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Enter a name for a new volume or select an existing one
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label>Host Path</Label>
+                          <Input
+                            placeholder="/path/on/host"
+                            value={newHostPath}
+                            onChange={(e) => setNewHostPath(e.target.value)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Absolute path to directory on the host system
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between">
+                        <Label>Read-only mount</Label>
+                        <Switch checked={newReadOnly} onCheckedChange={setNewReadOnly} />
+                      </div>
+
+                      <Button
+                        onClick={() => {
+                          const source = newVolumeType === "volume" ? newVolumeName : newHostPath;
+                          addVolume(newVolumeType, source, newContainerPath, newReadOnly);
+                        }}
+                        className="w-full"
+                        disabled={!newContainerPath || (newVolumeType === "volume" ? !newVolumeName : !newHostPath)}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Volume
+                      </Button>
                     </div>
 
                     {/* Volume list */}
                     {volumes.length > 0 && (
                       <div className="space-y-2">
-                        <Label>Configured Volumes</Label>
+                        <Label>Configured Volumes ({volumes.length})</Label>
                         <div className="space-y-2">
                           {volumes.map((volume, index) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                              className={`p-3 rounded-lg border ${
+                                volume.type === "bind" && !volume.hostPath
+                                  ? 'border-amber-500/50 bg-amber-500/5'
+                                  : volume.type === "volume" && !volume.volumeName
+                                    ? 'border-amber-500/50 bg-amber-500/5'
+                                    : 'bg-card'
+                              }`}
                             >
-                              <div className="flex items-center gap-4 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-2">
                                 <HardDrive className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="font-mono text-sm truncate">
-                                    {volume.hostPath}
-                                  </div>
-                                  <div className="font-mono text-xs text-muted-foreground truncate">
-                                    → {volume.containerPath}
-                                  </div>
-                                </div>
+                                <Badge variant={volume.type === "volume" ? "default" : "secondary"} className="text-xs">
+                                  {volume.type === "volume" ? "Podman Volume" : "Bind Mount"}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground flex-1">→</span>
+                                <code className="text-xs bg-muted px-2 py-1 rounded">{volume.containerPath}</code>
                                 {volume.readOnly && (
-                                  <Badge variant="secondary" className="flex-shrink-0">Read-only</Badge>
+                                  <Badge variant="outline" className="flex-shrink-0 text-xs">RO</Badge>
                                 )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeVolume(index)}
+                                  className="h-6 w-6"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
                               </div>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => removeVolume(index)}
-                                className="flex-shrink-0"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+
+                              {volume.type === "volume" ? (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    placeholder="Enter volume name (required)"
+                                    value={volume.volumeName}
+                                    onChange={(e) => {
+                                      const updated = [...volumes];
+                                      updated[index] = { ...updated[index], volumeName: e.target.value };
+                                      setVolumes(updated);
+                                    }}
+                                    className={`font-mono text-sm ${!volume.volumeName ? 'border-amber-500/50' : ''}`}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    placeholder="Enter host path (required)"
+                                    value={volume.hostPath}
+                                    onChange={(e) => {
+                                      const updated = [...volumes];
+                                      updated[index] = { ...updated[index], hostPath: e.target.value };
+                                      setVolumes(updated);
+                                    }}
+                                    className={`font-mono text-sm ${!volume.hostPath ? 'border-amber-500/50' : ''}`}
+                                  />
+                                </div>
+                              )}
+
+                              {volume.type === "bind" && !volume.hostPath && (
+                                <p className="text-xs text-amber-500 mt-1">
+                                  Host path required - enter the directory on your server
+                                </p>
+                              )}
+                              {volume.type === "volume" && !volume.volumeName && (
+                                <p className="text-xs text-amber-500 mt-1">
+                                  Volume name required
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1034,21 +1395,35 @@ export default function ContainerCreatePage() {
                           {envVars.map((env, index) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                              className="flex items-center gap-2 p-2 rounded-lg border bg-card"
                             >
-                              <div className="flex items-center gap-4 flex-1 min-w-0">
-                                <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                <div className="flex-1 min-w-0 font-mono text-sm">
-                                  <span className="text-primary">{env.key}</span>
-                                  <span className="text-muted-foreground">=</span>
-                                  <span className="truncate">{env.value}</span>
-                                </div>
-                              </div>
+                              <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <Input
+                                value={env.key}
+                                onChange={(e) => {
+                                  const updated = [...envVars];
+                                  updated[index] = { ...updated[index], key: e.target.value.toUpperCase() };
+                                  setEnvVars(updated);
+                                }}
+                                className="font-mono text-sm w-40 flex-shrink-0"
+                                placeholder="KEY"
+                              />
+                              <span className="text-muted-foreground">=</span>
+                              <Input
+                                value={env.value}
+                                onChange={(e) => {
+                                  const updated = [...envVars];
+                                  updated[index] = { ...updated[index], value: e.target.value };
+                                  setEnvVars(updated);
+                                }}
+                                className="font-mono text-sm flex-1"
+                                placeholder="value"
+                              />
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => removeEnvVar(index)}
-                                className="flex-shrink-0"
+                                className="flex-shrink-0 h-8 w-8"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -1157,7 +1532,7 @@ export default function ContainerCreatePage() {
 
       {/* Deployment Dialog */}
       <Dialog open={showDeployDialog} onOpenChange={setShowDeployDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {deployComplete ? (
@@ -1180,28 +1555,37 @@ export default function ContainerCreatePage() {
           </DialogHeader>
           
           {/* Deployment Steps */}
-          <div className="space-y-3">
+          <div className="space-y-3 overflow-hidden">
             {deploySteps.map((step, index) => (
-              <div 
-                key={index} 
-                className={`flex items-center gap-3 p-3 rounded-lg border ${
-                  step.error 
-                    ? "bg-red-500/10 border-red-500/30" 
-                    : step.complete 
-                      ? "bg-green-500/10 border-green-500/30" 
+              <div
+                key={index}
+                className={`flex items-start gap-3 p-3 rounded-lg border overflow-hidden ${
+                  step.error
+                    ? "bg-red-500/10 border-red-500/30"
+                    : step.complete
+                      ? "bg-green-500/10 border-green-500/30"
                       : "bg-muted/50 border-muted"
                 }`}
               >
                 {step.error ? (
-                  <XCircle className="h-5 w-5 text-red-500 shrink-0" />
+                  <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                 ) : step.complete ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
+                  <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5" />
                 ) : (
-                  <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                  <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0 mt-0.5" />
                 )}
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{step.step}</div>
-                  <div className="text-sm text-muted-foreground truncate">{step.message}</div>
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="font-medium capitalize">
+                    {step.step === "replace" ? "Replace" :
+                     step.step === "validate" ? "Validation" :
+                     step.step === "pull" ? "Image" :
+                     step.step === "volumes" ? "Volumes" :
+                     step.step === "create" ? "Create" :
+                     step.step === "start" ? "Start" :
+                     step.step === "complete" ? "Complete" :
+                     step.step}
+                  </div>
+                  <div className="text-sm text-muted-foreground break-words">{step.message}</div>
                 </div>
               </div>
             ))}
@@ -1277,8 +1661,8 @@ export default function ContainerCreatePage() {
 
       {/* Image Inspection Dialog */}
       <Dialog open={showInspectDialog} onOpenChange={(open) => !isInspecting && setShowInspectDialog(open)}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               {inspectStatus === "complete" ? (
                 <>
@@ -1299,24 +1683,25 @@ export default function ContainerCreatePage() {
             </DialogTitle>
           </DialogHeader>
 
-          {/* Pull Progress Output */}
-          {inspectOutput.length > 0 && (
-            <div className="mt-2">
-              <Label className="mb-2 block text-sm">Progress</Label>
-              <ScrollArea className="h-32 border rounded-lg bg-black/90 p-3">
-                <div ref={inspectOutputRef} className="font-mono text-xs text-green-400 space-y-0.5">
-                  {inspectOutput.map((line, index) => (
-                    <div key={index} className="whitespace-pre-wrap">{line}</div>
-                  ))}
-                </div>
-              </ScrollArea>
-            </div>
-          )}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+            {/* Pull Progress Output */}
+            {inspectOutput.length > 0 && (
+              <div className="mt-2">
+                <Label className="mb-2 block text-sm">Progress</Label>
+                <ScrollArea className="h-32 border rounded-lg bg-black/90 p-3">
+                  <div ref={inspectOutputRef} className="font-mono text-xs text-green-400 space-y-0.5">
+                    {inspectOutput.map((line, index) => (
+                      <div key={index} className="whitespace-pre-wrap break-all">{line}</div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
 
-          {/* Image Configuration Results */}
-          {imageConfig && inspectStatus === "complete" && (
-            <div className="mt-4 space-y-4">
-              <Label className="block text-sm font-semibold">Discovered Configuration</Label>
+            {/* Image Configuration Results */}
+            {imageConfig && inspectStatus === "complete" && (
+              <div className="mt-4 space-y-4">
+                <Label className="block text-sm font-semibold">Discovered Configuration</Label>
 
               {/* Exposed Ports */}
               {imageConfig.exposed_ports && imageConfig.exposed_ports.length > 0 && (
@@ -1354,21 +1739,21 @@ export default function ContainerCreatePage() {
 
               {/* Environment Variables */}
               {imageConfig.environment && imageConfig.environment.filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME"].includes(e.key)).length > 0 && (
-                <div className="p-3 bg-muted/50 rounded-lg">
+                <div className="p-3 bg-muted/50 rounded-lg overflow-hidden">
                   <div className="flex items-center gap-2 mb-2">
-                    <Settings className="h-4 w-4 text-accent" />
+                    <Settings className="h-4 w-4 text-accent flex-shrink-0" />
                     <span className="text-sm font-medium">
                       Environment Variables ({imageConfig.environment.filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME"].includes(e.key)).length})
                     </span>
                   </div>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                  <div className="space-y-1 max-h-32 overflow-y-auto overflow-x-hidden">
                     {imageConfig.environment
                       .filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME", "TERM", "LANG", "LC_ALL"].includes(e.key) && !e.key.startsWith("GPG_"))
                       .map((env, i) => (
-                        <div key={i} className="text-xs font-mono">
-                          <span className="text-primary">{env.key}</span>
-                          <span className="text-muted-foreground">=</span>
-                          <span className="text-muted-foreground truncate">{env.value.length > 50 ? env.value.substring(0, 50) + "..." : env.value}</span>
+                        <div key={i} className="text-xs font-mono flex items-start gap-0 min-w-0">
+                          <span className="text-primary flex-shrink-0">{env.key}</span>
+                          <span className="text-muted-foreground flex-shrink-0">=</span>
+                          <span className="text-muted-foreground break-all">{env.value.length > 40 ? env.value.substring(0, 40) + "..." : env.value}</span>
                         </div>
                       ))}
                   </div>
@@ -1401,13 +1786,14 @@ export default function ContainerCreatePage() {
           {inspectStatus === "not_found" && (
             <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-center">
               <p className="text-sm text-destructive">
-                Image not found locally. Click "Pull & Inspect" to download it.
+                Image not found locally. Click &quot;Pull &amp; Inspect&quot; to download it.
               </p>
             </div>
           )}
+          </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 mt-4">
+          <div className="flex justify-end gap-2 mt-4 flex-shrink-0">
             {inspectStatus === "complete" && imageConfig && (
               <Button onClick={applyImageConfig}>
                 <CheckCircle2 className="h-4 w-4 mr-2" />
@@ -1423,5 +1809,20 @@ export default function ContainerCreatePage() {
         </DialogContent>
       </Dialog>
     </DashboardLayout>
+  );
+}
+
+// Wrap in Suspense for useSearchParams
+export default function ContainerCreatePage() {
+  return (
+    <Suspense fallback={
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-full">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </DashboardLayout>
+    }>
+      <ContainerCreateContent />
+    </Suspense>
   );
 }

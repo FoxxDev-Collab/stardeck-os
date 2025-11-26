@@ -81,7 +81,7 @@ export function ImageBrowser({ onRefresh }: ImageBrowserProps) {
       if (!response.ok) throw new Error("Failed to fetch images");
       
       const data = await response.json();
-      setImages(data.images || []);
+      setImages(data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load images");
     } finally {

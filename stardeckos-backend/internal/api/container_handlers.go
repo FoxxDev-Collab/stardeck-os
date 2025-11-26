@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -244,9 +246,11 @@ func getContainerHandler(c echo.Context) error {
 			"name":        inspect.HostConfig.RestartPolicy.Name,
 			"max_retries": inspect.HostConfig.RestartPolicy.MaximumRetryCount,
 		},
-		"network_mode": inspect.HostConfig.NetworkMode,
-		"mounts":       inspect.Mounts,
-		"networks":     inspect.NetworkSettings.Networks,
+		"network_mode":  inspect.HostConfig.NetworkMode,
+		"port_bindings": inspect.HostConfig.PortBindings,
+		"memory_limit":  inspect.HostConfig.Memory,
+		"mounts":        inspect.Mounts,
+		"networks":      inspect.NetworkSettings.Networks,
 	}
 
 	// Add Stardeck metadata if available
@@ -377,18 +381,36 @@ func validateContainerHandler(c echo.Context) error {
 	}
 
 	// 4. Validate volumes
+	volumeErrors := []string{}
+	volumeWarnings := []string{}
 	for _, vol := range req.Volumes {
 		if vol.Source == "" || vol.Target == "" {
-			results = append(results, ValidationResult{
-				Check:   "volumes",
-				Status:  "error",
-				Message: "Invalid volume configuration",
-				Details: "Both source and target paths are required",
-			})
+			volumeErrors = append(volumeErrors, "Both source and target paths are required for all volumes")
 			break
 		}
+		// Check if host directory exists
+		if !filepath.IsAbs(vol.Source) {
+			volumeWarnings = append(volumeWarnings, fmt.Sprintf("'%s' is not an absolute path", vol.Source))
+		} else if _, err := os.Stat(vol.Source); os.IsNotExist(err) {
+			volumeWarnings = append(volumeWarnings, fmt.Sprintf("'%s' does not exist (will be created)", vol.Source))
+		}
 	}
-	if len(req.Volumes) > 0 {
+
+	if len(volumeErrors) > 0 {
+		results = append(results, ValidationResult{
+			Check:   "volumes",
+			Status:  "error",
+			Message: "Invalid volume configuration",
+			Details: volumeErrors[0],
+		})
+	} else if len(volumeWarnings) > 0 {
+		results = append(results, ValidationResult{
+			Check:   "volumes",
+			Status:  "warning",
+			Message: "Volume paths need attention",
+			Details: volumeWarnings[0],
+		})
+	} else if len(req.Volumes) > 0 {
 		results = append(results, ValidationResult{
 			Check:   "volumes",
 			Status:  "ok",
@@ -508,7 +530,23 @@ func deployContainerHandler(c echo.Context) error {
 		sendStatus("pull", "Image pulled successfully", false, map[string]interface{}{"complete": true})
 	}
 
-	// Step 3: Create container
+	// Step 3: Create volume directories
+	if len(req.Volumes) > 0 {
+		sendStatus("volumes", "Creating volume directories...", false, nil)
+		for _, vol := range req.Volumes {
+			if vol.Source != "" && filepath.IsAbs(vol.Source) {
+				if _, err := os.Stat(vol.Source); os.IsNotExist(err) {
+					if err := os.MkdirAll(vol.Source, 0755); err != nil {
+						sendStatus("volumes", fmt.Sprintf("Failed to create directory '%s': %s", vol.Source, err.Error()), true, nil)
+						return nil
+					}
+				}
+			}
+		}
+		sendStatus("volumes", "Volume directories ready", false, map[string]interface{}{"complete": true})
+	}
+
+	// Step 4: Create container
 	sendStatus("create", "Creating container...", false, nil)
 
 	containerID, err := podmanService.CreateContainer(ctx, &req)
@@ -543,7 +581,7 @@ func deployContainerHandler(c echo.Context) error {
 
 	containerRepo.Create(dbContainer)
 
-	// Step 4: Start container (if auto-start enabled)
+	// Step 5: Start container (if auto-start enabled)
 	if req.AutoStart {
 		sendStatus("start", "Starting container...", false, nil)
 
@@ -1105,6 +1143,54 @@ func removeImageHandler(c echo.Context) error {
 }
 
 // Volume handlers
+
+// BindMount represents a bind mount from a container
+type BindMount struct {
+	HostPath      string `json:"host_path"`
+	ContainerPath string `json:"container_path"`
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name"`
+	ReadWrite     bool   `json:"rw"`
+}
+
+// listBindMountsHandler returns all bind mounts across all containers
+func listBindMountsHandler(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
+	defer cancel()
+
+	// Get all containers
+	containers, err := podmanService.ListContainers(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to list containers: " + err.Error(),
+		})
+	}
+
+	bindMounts := []BindMount{}
+
+	// Inspect each container to get its mounts
+	for _, container := range containers {
+		inspect, err := podmanService.InspectContainer(ctx, container.ContainerID)
+		if err != nil {
+			continue // Skip containers that can't be inspected
+		}
+
+		for _, mount := range inspect.Mounts {
+			// Filter for bind mounts only
+			if mount.Type == "bind" {
+				bindMounts = append(bindMounts, BindMount{
+					HostPath:      mount.Source,
+					ContainerPath: mount.Destination,
+					ContainerID:   container.ContainerID,
+					ContainerName: container.Name,
+					ReadWrite:     mount.RW,
+				})
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, bindMounts)
+}
 
 // listVolumesHandler returns all volumes
 func listVolumesHandler(c echo.Context) error {
