@@ -86,7 +86,7 @@
 - [x] M2B.5: Monaco code editor integration (YAML editor for stacks)
 - [x] M2B.6: Docker Hub image search and browse
 - [x] M2B.7: Environment variable manager with .env import/export
-- [x] M2B.8: Podman volume and network management (enhanced with full volume type support)
+- [x] M2B.8: Podman volume and network management (enhanced with full volume type support, storage location config)
 - [x] M2B.9: Port usage tracking (shows which containers use which ports)
 - [x] M2B.10: Enhanced port selector with common presets and conflict detection
 - [x] M2B.11: Container stats charts (CPU, memory, network I/O with sparklines)
@@ -293,6 +293,7 @@ The Container Manager provides comprehensive Podman container orchestration:
 - Operator+ role for start/stop/restart operations
 - All system users can view containers and stats
 - Container metadata enrichment from SQLite database (web UI flags, custom icons)
+- **Storage Configuration**: Admin can configure Podman's storage location (graphroot) for using alternate drives
 
 **Remaining Tasks**:
 - Web UI proxy system (iframe integration for containerized web apps)

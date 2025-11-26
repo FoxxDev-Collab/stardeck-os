@@ -252,6 +252,10 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	volumes.POST("", createVolumeHandler, auth.RequireRole(models.RoleAdmin))
 	volumes.DELETE("/:name", removeVolumeHandler, auth.RequireRole(models.RoleAdmin))
 
+	// Podman storage configuration (admin only)
+	api.GET("/storage-config", getStorageConfigHandler, auth.RequireAuth(authSvc), auth.RequireRole(models.RoleAdmin))
+	api.PUT("/storage-config", updateStorageConfigHandler, auth.RequireAuth(authSvc), auth.RequireRole(models.RoleAdmin))
+
 	// Bind mounts endpoint (aggregates bind mounts from all containers)
 	api.GET("/bind-mounts", listBindMountsHandler, auth.RequireAuth(authSvc))
 

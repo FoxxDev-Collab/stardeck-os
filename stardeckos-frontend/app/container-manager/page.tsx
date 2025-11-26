@@ -132,6 +132,14 @@ interface InstallMessage {
   version?: string;
 }
 
+interface StorageConfig {
+  graph_root: string;
+  run_root: string;
+  driver: string;
+  config_path: string;
+  is_default: boolean;
+}
+
 export default function ContainerManagerPage() {
   const { isAuthenticated, isLoading, token, user } = useAuth();
   const { settings, updateContainerSettings } = useSettings();
@@ -182,6 +190,12 @@ export default function ContainerManagerPage() {
   const [newVolumeName, setNewVolumeName] = useState("");
   const [creatingVolume, setCreatingVolume] = useState(false);
 
+  // Storage config state
+  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null);
+  const [newGraphRoot, setNewGraphRoot] = useState("");
+  const [updatingStorage, setUpdatingStorage] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+
   // Create container form
   const [newContainer, setNewContainer] = useState({
     name: "",
@@ -208,6 +222,56 @@ export default function ContainerManagerPage() {
       setPodmanAvailable(false);
     }
   }, [token]);
+
+  const fetchStorageConfig = useCallback(async () => {
+    if (!token || !isAdmin) return;
+    try {
+      const response = await fetch("/api/storage-config", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setStorageConfig(data);
+        setNewGraphRoot(data.graph_root);
+      }
+    } catch {
+      // Ignore errors - storage config is optional
+    }
+  }, [token, isAdmin]);
+
+  const updateStorageLocation = async () => {
+    if (!token || !newGraphRoot) return;
+
+    setUpdatingStorage(true);
+    setStorageError(null);
+
+    try {
+      const response = await fetch("/api/storage-config", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ graph_root: newGraphRoot }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setStorageError(data.error || "Failed to update storage location");
+        return;
+      }
+
+      // Refresh storage config
+      await fetchStorageConfig();
+      // Refresh containers/volumes as they may have been reset
+      await Promise.all([fetchContainers(), fetchVolumes()]);
+    } catch (err) {
+      setStorageError("Failed to update storage location");
+    } finally {
+      setUpdatingStorage(false);
+    }
+  };
 
   const startPodmanInstall = () => {
     setShowInstallDialog(true);
@@ -388,13 +452,14 @@ export default function ContainerManagerPage() {
       fetchVolumes();
       fetchBindMounts();
       fetchNetworks();
+      fetchStorageConfig();
 
       const interval = setInterval(() => {
         fetchContainers();
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, token, checkPodman, fetchContainers, fetchImages, fetchVolumes, fetchBindMounts, fetchNetworks]);
+  }, [isAuthenticated, token, checkPodman, fetchContainers, fetchImages, fetchVolumes, fetchBindMounts, fetchNetworks, fetchStorageConfig]);
 
   if (isLoading || !isAuthenticated || !hasPermission) {
     return (
@@ -1454,24 +1519,66 @@ export default function ContainerManagerPage() {
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            {/* Default Volume Path */}
+            {/* Podman Storage Location */}
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <FolderOpen className="w-4 h-4 text-accent" />
-                <Label className="font-medium">Default Volume Path</Label>
+                <HardDrive className="w-4 h-4 text-accent" />
+                <Label className="font-medium">Podman Storage Location</Label>
               </div>
-              <Input
-                placeholder="/mnt/data/containers"
-                value={settings.container.defaultVolumePath}
-                onChange={(e) => updateContainerSettings({ defaultVolumePath: e.target.value })}
-                className="font-mono"
-              />
-              <p className="text-xs text-muted-foreground">
-                Base path for volume mounts. Leave empty to enter paths manually.
-              </p>
-              {settings.container.defaultVolumePath && (
-                <div className="p-2 bg-muted/50 rounded text-xs font-mono">
-                  Example: {settings.container.defaultVolumePath}/postgres/data
+              {storageConfig ? (
+                <>
+                  <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Current location:</span>
+                      <code className="font-mono text-xs bg-background px-2 py-1 rounded">{storageConfig.graph_root}</code>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Storage driver:</span>
+                      <span className="text-xs">{storageConfig.driver}</span>
+                    </div>
+                    {storageConfig.is_default && (
+                      <p className="text-xs text-muted-foreground">Using default Podman storage location</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm">Change storage location</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="/mnt/containers/storage"
+                        value={newGraphRoot}
+                        onChange={(e) => setNewGraphRoot(e.target.value)}
+                        className="font-mono flex-1"
+                        disabled={updatingStorage}
+                      />
+                      <Button
+                        variant="outline"
+                        onClick={updateStorageLocation}
+                        disabled={updatingStorage || newGraphRoot === storageConfig.graph_root || !newGraphRoot}
+                      >
+                        {updatingStorage ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          "Apply"
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  {storageError && (
+                    <div className="p-2 bg-destructive/10 border border-destructive/30 rounded text-xs text-destructive">
+                      {storageError}
+                    </div>
+                  )}
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      <strong>Warning:</strong> Changing storage location will reset Podman storage.
+                      All existing containers, images, and volumes will be removed.
+                      Stop all containers before changing this setting.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="p-3 bg-muted/50 rounded-lg text-sm text-muted-foreground">
+                  Storage configuration not available. Podman may not be installed.
                 </div>
               )}
             </div>

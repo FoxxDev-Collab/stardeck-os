@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -1415,4 +1416,130 @@ func (p *PodmanService) GetStackContainers(ctx context.Context, projectName stri
 	}
 
 	return result, nil
+}
+
+// StorageConfig represents Podman storage configuration
+type StorageConfig struct {
+	GraphRoot  string `json:"graph_root"`
+	RunRoot    string `json:"run_root"`
+	Driver     string `json:"driver"`
+	ConfigPath string `json:"config_path"`
+	IsDefault  bool   `json:"is_default"`
+}
+
+// GetStorageConfig retrieves current Podman storage configuration
+func (p *PodmanService) GetStorageConfig(ctx context.Context) (*StorageConfig, error) {
+	// Use podman info to get storage configuration
+	output, err := p.podmanCmd(ctx, "info", "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get podman info: %w", err)
+	}
+
+	var info struct {
+		Store struct {
+			ConfigFile      string `json:"configFile"`
+			ContainerStore  struct {
+				Number int `json:"number"`
+			} `json:"containerStore"`
+			GraphDriverName string `json:"graphDriverName"`
+			GraphRoot       string `json:"graphRoot"`
+			RunRoot         string `json:"runRoot"`
+		} `json:"store"`
+	}
+
+	if err := json.Unmarshal(output, &info); err != nil {
+		return nil, fmt.Errorf("failed to parse podman info: %w", err)
+	}
+
+	// Check if using default location
+	defaultGraphRoot := "/var/lib/containers/storage"
+	isDefault := info.Store.GraphRoot == defaultGraphRoot
+
+	return &StorageConfig{
+		GraphRoot:  info.Store.GraphRoot,
+		RunRoot:    info.Store.RunRoot,
+		Driver:     info.Store.GraphDriverName,
+		ConfigPath: info.Store.ConfigFile,
+		IsDefault:  isDefault,
+	}, nil
+}
+
+// UpdateStorageConfig updates the Podman storage configuration
+func (p *PodmanService) UpdateStorageConfig(ctx context.Context, graphRoot string) error {
+	configPath := "/etc/containers/storage.conf"
+
+	// Read existing config or create new one
+	var content string
+	existingContent, err := os.ReadFile(configPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read storage config: %w", err)
+		}
+		// Create default config with new graphroot
+		content = fmt.Sprintf(`# Podman storage configuration
+# Modified by Stardeck OS
+
+[storage]
+driver = "overlay"
+runroot = "/run/containers/storage"
+graphroot = "%s"
+
+[storage.options]
+additionalimagestores = []
+
+[storage.options.overlay]
+mountopt = "nodev,metacopy=on"
+`, graphRoot)
+	} else {
+		// Update existing config
+		content = string(existingContent)
+		lines := strings.Split(content, "\n")
+		var newLines []string
+		graphRootSet := false
+		inStorage := false
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+
+			// Track if we're in [storage] section
+			if strings.HasPrefix(trimmed, "[storage]") && !strings.HasPrefix(trimmed, "[storage.") {
+				inStorage = true
+			} else if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[storage") {
+				inStorage = false
+			}
+
+			// Replace graphroot line
+			if inStorage && strings.HasPrefix(trimmed, "graphroot") {
+				newLines = append(newLines, fmt.Sprintf(`graphroot = "%s"`, graphRoot))
+				graphRootSet = true
+			} else {
+				newLines = append(newLines, line)
+			}
+		}
+
+		// If graphroot wasn't found, add it after [storage]
+		if !graphRootSet {
+			var finalLines []string
+			for _, line := range newLines {
+				finalLines = append(finalLines, line)
+				if strings.TrimSpace(line) == "[storage]" {
+					finalLines = append(finalLines, fmt.Sprintf(`graphroot = "%s"`, graphRoot))
+				}
+			}
+			newLines = finalLines
+		}
+
+		content = strings.Join(newLines, "\n")
+	}
+
+	// Write the config file
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write storage config: %w", err)
+	}
+
+	// Reset podman storage to apply changes
+	// Note: This clears existing storage data, user should be warned in UI
+	_, _ = p.podmanCmd(ctx, "system", "reset", "--force")
+
+	return nil
 }

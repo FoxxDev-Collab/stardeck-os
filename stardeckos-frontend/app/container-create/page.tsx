@@ -456,9 +456,8 @@ function ContainerCreateContent() {
       });
     }
 
-    // Apply volumes - default to Podman volumes, with bind mount fallback if path is set
+    // Apply volumes - always default to Podman volumes (managed storage)
     if (imageConfig.volumes && imageConfig.volumes.length > 0) {
-      const defaultBasePath = settings.container.defaultVolumePath;
       // Generate a container-specific subdirectory name from the image name
       const containerSubdir = containerName || imageName.replace(/[^a-zA-Z0-9-_]/g, '-');
 
@@ -467,16 +466,10 @@ function ContainerCreateContent() {
         const volName = v.split('/').filter(Boolean).pop() || 'data';
         const suggestedVolumeName = `${containerSubdir}-${volName}`.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
 
-        // If default base path is set, use bind mount; otherwise default to Podman volume
-        const useBindMount = !!defaultBasePath;
-        const hostPath = defaultBasePath
-          ? `${defaultBasePath}/${containerSubdir}/${volName}`
-          : "";
-
         return {
-          type: useBindMount ? "bind" as const : "volume" as const,
-          hostPath: useBindMount ? hostPath : "",
-          volumeName: useBindMount ? "" : suggestedVolumeName,
+          type: "volume" as const,
+          hostPath: "",
+          volumeName: suggestedVolumeName,
           containerPath: v,
           readOnly: false,
         };

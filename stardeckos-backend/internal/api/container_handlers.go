@@ -1589,3 +1589,94 @@ func logAudit(user *models.User, action, target string, details map[string]inter
 		Details:  detailsJSON,
 	})
 }
+
+// Storage configuration handlers
+
+// getStorageConfigHandler returns current Podman storage configuration
+func getStorageConfigHandler(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	config, err := podmanService.GetStorageConfig(ctx)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to get storage config: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, config)
+}
+
+// UpdateStorageConfigRequest represents a request to update storage configuration
+type UpdateStorageConfigRequest struct {
+	GraphRoot string `json:"graph_root" validate:"required"`
+}
+
+// updateStorageConfigHandler updates Podman storage configuration
+func updateStorageConfigHandler(c echo.Context) error {
+	var req UpdateStorageConfigRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request: " + err.Error(),
+		})
+	}
+
+	if req.GraphRoot == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "graph_root is required",
+		})
+	}
+
+	// Validate the path exists and is a directory
+	info, err := os.Stat(req.GraphRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Try to create the directory
+			if err := os.MkdirAll(req.GraphRoot, 0755); err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Cannot create directory: " + err.Error(),
+				})
+			}
+		} else {
+			return c.JSON(http.StatusBadRequest, map[string]string{
+				"error": "Cannot access path: " + err.Error(),
+			})
+		}
+	} else if !info.IsDir() {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Path is not a directory",
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
+	defer cancel()
+
+	// Check if any containers are running
+	containers, err := podmanService.ListContainers(ctx)
+	if err == nil {
+		for _, container := range containers {
+			if container.Status == models.ContainerStatusRunning {
+				return c.JSON(http.StatusConflict, map[string]string{
+					"error": "Cannot change storage while containers are running. Stop all containers first.",
+				})
+			}
+		}
+	}
+
+	// Update the storage config
+	if err := podmanService.UpdateStorageConfig(ctx, req.GraphRoot); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to update storage config: " + err.Error(),
+		})
+	}
+
+	user := c.Get("user").(*models.User)
+	logAudit(user, "storage.config.update", req.GraphRoot, map[string]interface{}{
+		"graph_root": req.GraphRoot,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"status":  "updated",
+		"message": "Storage configuration updated. Podman will use the new location for volumes.",
+	})
+}

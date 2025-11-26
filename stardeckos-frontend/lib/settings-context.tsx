@@ -81,7 +81,6 @@ export type RestartPolicy = "no" | "always" | "unless-stopped" | "on-failure";
 export type NetworkMode = "bridge" | "host" | "none";
 
 export interface ContainerSettings {
-  defaultVolumePath: string; // Default host path for volume mounts (e.g., /mnt/data/containers)
   defaultRestartPolicy: RestartPolicy;
   defaultNetworkMode: NetworkMode;
   autoStartContainers: boolean; // Start containers immediately after creation
@@ -123,7 +122,6 @@ const defaultSettings: Settings = {
     backgroundImage: "",
   },
   container: {
-    defaultVolumePath: "",
     defaultRestartPolicy: "unless-stopped",
     defaultNetworkMode: "bridge",
     autoStartContainers: true,

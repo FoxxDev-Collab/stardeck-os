@@ -421,22 +421,51 @@ func CreatePartition(req *PartitionRequest) (*OperationResult, error) {
 		return nil, fmt.Errorf("invalid device path: %s", req.Device)
 	}
 
-	// Get current partition table to find next partition number
-	// Use parted to create partition
+	// Check if disk has a partition table, create GPT if not
+	checkCmd := exec.Command("parted", req.Device, "-s", "print")
+	checkOutput, checkErr := checkCmd.CombinedOutput()
+	outputStr := string(checkOutput)
+
+	// If parted fails with "unrecognised disk label", the disk has no partition table
+	if checkErr != nil && (strings.Contains(outputStr, "unrecognised disk label") ||
+		strings.Contains(outputStr, "unrecognized disk label")) {
+		// Create a GPT partition table
+		mklabelCmd := exec.Command("parted", req.Device, "-s", "mklabel", "gpt")
+		mklabelOutput, mklabelErr := mklabelCmd.CombinedOutput()
+		if mklabelErr != nil {
+			return &OperationResult{
+				Success: false,
+				Message: fmt.Sprintf("Failed to create partition table: %v", mklabelErr),
+				Output:  string(mklabelOutput),
+			}, nil
+		}
+	}
+
+	// Get current partition table to find free space
+	startCmd := exec.Command("parted", req.Device, "-s", "unit", "MB", "print", "free")
+	startOutput, startErr := startCmd.CombinedOutput()
+	startOutputStr := string(startOutput)
+
+	// Find free space start for new partition
+	startMB := findFreeSpaceStart(startOutputStr)
+	if startMB < 0 {
+		// Provide detailed error message
+		errMsg := fmt.Sprintf("no free space found on %s", req.Device)
+		if startErr != nil {
+			errMsg = fmt.Sprintf("failed to read partition table on %s: %v", req.Device, startErr)
+		}
+		return &OperationResult{
+			Success: false,
+			Message: errMsg,
+			Output:  startOutputStr,
+		}, nil
+	}
+
+	// Calculate end point
 	var endPoint string
 	if req.SizeMB == 0 {
 		endPoint = "100%"
 	} else {
-		// Calculate end point
-		// First get current end of last partition
-		cmd := exec.Command("parted", req.Device, "-s", "unit", "MB", "print", "free")
-		output, _ := cmd.CombinedOutput()
-
-		// Parse output to find free space start
-		startMB := findFreeSpaceStart(string(output))
-		if startMB < 0 {
-			return nil, fmt.Errorf("no free space available on disk")
-		}
 		endPoint = fmt.Sprintf("%dMB", startMB+req.SizeMB)
 	}
 
@@ -444,14 +473,6 @@ func CreatePartition(req *PartitionRequest) (*OperationResult, error) {
 	partType := "primary"
 	if req.PartType != "" {
 		partType = req.PartType
-	}
-
-	// Find free space start for new partition
-	startCmd := exec.Command("parted", req.Device, "-s", "unit", "MB", "print", "free")
-	startOutput, _ := startCmd.CombinedOutput()
-	startMB := findFreeSpaceStart(string(startOutput))
-	if startMB < 0 {
-		return nil, fmt.Errorf("no free space available")
 	}
 
 	// Create partition
@@ -689,18 +710,21 @@ func isValidDevice(device string) bool {
 }
 
 // findFreeSpaceStart parses parted output to find the start of free space
+// Returns the start position in MB, or -1 if no free space found
 func findFreeSpaceStart(output string) int64 {
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "Free Space") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
-				// Parse start value (e.g., "1024MB")
+				// Parse start value (e.g., "0.02MB" or "1024MB")
 				startStr := strings.TrimSuffix(fields[0], "MB")
 				startStr = strings.TrimSuffix(startStr, "GB")
-				start, err := strconv.ParseInt(startStr, 10, 64)
+				// Use ParseFloat to handle decimal values like "0.02"
+				start, err := strconv.ParseFloat(startStr, 64)
 				if err == nil {
-					return start
+					// Round up to nearest MB to avoid alignment issues
+					return int64(start) + 1
 				}
 			}
 		}
