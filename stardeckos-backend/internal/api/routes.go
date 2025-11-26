@@ -182,4 +182,43 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 
 	// Terminal WebSocket route (authentication handled inside handler due to WebSocket limitations)
 	api.GET("/terminal/ws", HandleTerminalWebSocket)
+
+	// Network management routes
+	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage network
+	network := api.Group("/network")
+	network.Use(auth.RequireAuth(authSvc))
+	network.Use(auth.RequireSystemUser())
+
+	// Interface routes (read: all system users, write: admin only)
+	network.GET("/interfaces", listInterfacesHandler)
+	network.GET("/interfaces/:name", getInterfaceHandler)
+	network.GET("/interfaces/:name/stats", getInterfaceStatsHandler)
+	network.POST("/interfaces/:name/state", setInterfaceStateHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Firewall routes (read: all system users, write: admin only)
+	network.GET("/firewall/status", getFirewallStatusHandler)
+	network.GET("/firewall/zones", listFirewallZonesHandler)
+	network.GET("/firewall/zones/:zone", getFirewallZoneHandler)
+	network.GET("/firewall/services", getAvailableServicesHandler)
+	network.POST("/firewall/zones", createFirewallZoneHandler, auth.RequireRole(models.RoleAdmin))
+	network.DELETE("/firewall/zones/:zone", deleteFirewallZoneHandler, auth.RequireRole(models.RoleAdmin))
+	network.POST("/firewall/zones/:zone/services", addFirewallServiceHandler, auth.RequireRole(models.RoleAdmin))
+	network.DELETE("/firewall/zones/:zone/services/:service", removeFirewallServiceHandler, auth.RequireRole(models.RoleAdmin))
+	network.POST("/firewall/zones/:zone/ports", addFirewallPortHandler, auth.RequireRole(models.RoleAdmin))
+	network.DELETE("/firewall/zones/:zone/ports/:port", removeFirewallPortHandler, auth.RequireRole(models.RoleAdmin))
+	network.POST("/firewall/zones/:zone/rules", addFirewallRichRuleHandler, auth.RequireRole(models.RoleAdmin))
+	network.DELETE("/firewall/zones/:zone/rules", removeFirewallRichRuleHandler, auth.RequireRole(models.RoleAdmin))
+	network.POST("/firewall/reload", reloadFirewallHandler, auth.RequireRole(models.RoleAdmin))
+	network.POST("/firewall/default-zone", setDefaultZoneHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Route management (read: all system users, write: admin only)
+	network.GET("/routes", listRoutesHandler)
+	network.POST("/routes", addRouteHandler, auth.RequireRole(models.RoleAdmin))
+	network.DELETE("/routes/:destination", deleteRouteHandler, auth.RequireRole(models.RoleAdmin))
+
+	// DNS configuration (read-only)
+	network.GET("/dns", getDNSConfigHandler)
+
+	// Active connections (read-only)
+	network.GET("/connections", listConnectionsHandler)
 }

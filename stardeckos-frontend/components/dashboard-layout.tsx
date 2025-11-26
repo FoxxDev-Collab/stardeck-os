@@ -25,6 +25,27 @@ export function DashboardLayout({ children, title, time, actions, onCustomizeCli
 
   const isBottom = settings.taskbarPosition === "bottom";
 
+  // Compute background style based on settings
+  const getBackgroundStyle = (): React.CSSProperties => {
+    switch (settings.desktop.backgroundType) {
+      case "color":
+        return { backgroundColor: settings.desktop.backgroundColor };
+      case "gradient":
+        return { background: settings.desktop.backgroundGradient };
+      case "image":
+        return settings.desktop.backgroundImage
+          ? {
+              backgroundImage: `url(${settings.desktop.backgroundImage})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              backgroundRepeat: "no-repeat",
+            }
+          : {};
+      default:
+        return {};
+    }
+  };
+
   const taskbar = (
     <header
       className={`
@@ -99,17 +120,25 @@ export function DashboardLayout({ children, title, time, actions, onCustomizeCli
     </header>
   );
 
+  const backgroundStyle = getBackgroundStyle();
+  const hasCustomBackground = settings.desktop.backgroundType !== "default";
+
   return (
-    <div className={`min-h-screen bg-background relative overflow-hidden flex flex-col ${isBottom ? "flex-col-reverse" : ""}`}>
-      {/* Background grid */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, hsl(var(--border) / 0.1) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border) / 0.1) 1px, transparent 1px)",
-          backgroundSize: "40px 40px",
-        }}
-      />
+    <div
+      className={`min-h-screen relative overflow-hidden flex flex-col ${isBottom ? "flex-col-reverse" : ""} ${!hasCustomBackground ? "bg-background" : ""}`}
+      style={hasCustomBackground ? backgroundStyle : undefined}
+    >
+      {/* Background grid - only show on default background */}
+      {!hasCustomBackground && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, hsl(var(--border) / 0.1) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border) / 0.1) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+          }}
+        />
+      )}
 
       {/* Glow effects */}
       <div

@@ -37,7 +37,16 @@ import {
   Globe,
   Trash2,
   RefreshCw,
+  Upload,
+  Check,
+  Copy,
+  ExternalLink,
+  Image,
+  ImagePlus,
 } from "lucide-react";
+import { BackgroundType } from "@/lib/settings-context";
+import { ThemeImportDialog } from "@/components/theme-import-dialog";
+import { exportThemeToCSS } from "@/lib/theme-parser";
 
 interface Session {
   id: number;
@@ -49,12 +58,14 @@ interface Session {
 }
 
 export default function SettingsPage() {
-  const { isAuthenticated, isLoading, token } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
+  const [isUploadingBg, setIsUploadingBg] = useState(false);
+  const [uploadedBackgrounds, setUploadedBackgrounds] = useState<string[]>([]);
   const {
     settings,
     updateSettings,
@@ -62,7 +73,32 @@ export default function SettingsPage() {
     updateThemeSettings,
     updateDesktopSettings,
     resetSettings,
+    customThemes,
+    removeCustomTheme,
+    applyCustomTheme,
+    getActiveCustomTheme,
   } = useSettings();
+
+  const fetchUploadedBackgrounds = async () => {
+    if (!token || !user) return;
+    try {
+      const backgroundsPath = `/home/${user.username}/backgrounds`;
+      const response = await fetch(`/api/files?path=${encodeURIComponent(backgroundsPath)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const imageFiles = (data.files || [])
+          .filter((f: { name: string; is_dir: boolean }) =>
+            !f.is_dir && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f.name)
+          )
+          .map((f: { name: string }) => `/api/files/download?path=${backgroundsPath}/${f.name}`);
+        setUploadedBackgrounds(imageFiles);
+      }
+    } catch {
+      // Directory might not exist yet, that's okay
+    }
+  };
 
   const fetchSessions = async () => {
     if (!token) return;
@@ -136,9 +172,10 @@ export default function SettingsPage() {
   useEffect(() => {
     if (isAuthenticated && token) {
       fetchSessions();
+      fetchUploadedBackgrounds();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, token]);
+  }, [isAuthenticated, token, user]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -497,6 +534,164 @@ export default function SettingsPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Custom Themes Card */}
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Upload className="w-5 h-5 text-accent" />
+                        Custom Themes
+                      </CardTitle>
+                      <CardDescription>
+                        Import themes from{" "}
+                        <a
+                          href="https://tweakcn.com"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent hover:underline inline-flex items-center gap-1"
+                        >
+                          tweakcn.com
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </CardDescription>
+                    </div>
+                    <ThemeImportDialog>
+                      <Button variant="outline" size="sm" className="gap-2 border-border/60">
+                        <Upload className="w-4 h-4" />
+                        Import
+                      </Button>
+                    </ThemeImportDialog>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Default Theme Option */}
+                  <button
+                    onClick={() => applyCustomTheme(null)}
+                    className={`
+                      w-full p-4 rounded-lg border-2 transition-all duration-200 text-left
+                      ${!settings.theme.activeCustomThemeId
+                        ? "border-accent bg-accent/10 shadow-[0_0_15px_rgba(112,187,179,0.2)]"
+                        : "border-border/60 hover:border-accent/50 hover:bg-accent/5"
+                      }
+                    `}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+                          <Palette className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Default Theme</p>
+                          <p className="text-xs text-muted-foreground">
+                            Stardeck OS built-in theme
+                          </p>
+                        </div>
+                      </div>
+                      {!settings.theme.activeCustomThemeId && (
+                        <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center">
+                          <Check className="w-4 h-4 text-accent-foreground" />
+                        </div>
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Custom Themes List */}
+                  {customThemes.map((theme) => {
+                    const isActive = settings.theme.activeCustomThemeId === theme.id;
+                    const previewBg = theme.lightVariables.background || theme.darkVariables.background;
+                    const previewPrimary = theme.lightVariables.primary || theme.darkVariables.primary;
+                    const previewAccent = theme.lightVariables.accent || theme.darkVariables.accent;
+
+                    return (
+                      <div
+                        key={theme.id}
+                        className={`
+                          p-4 rounded-lg border-2 transition-all duration-200
+                          ${isActive
+                            ? "border-accent bg-accent/10 shadow-[0_0_15px_rgba(112,187,179,0.2)]"
+                            : "border-border/60 hover:border-accent/50"
+                          }
+                        `}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <button
+                            onClick={() => applyCustomTheme(theme.id)}
+                            className="flex items-center gap-3 flex-1 text-left"
+                          >
+                            {/* Theme Preview Swatches */}
+                            <div className="flex -space-x-1">
+                              <div
+                                className="w-6 h-6 rounded-full border-2 border-card"
+                                style={{ backgroundColor: previewBg || "#1a1a2e" }}
+                              />
+                              <div
+                                className="w-6 h-6 rounded-full border-2 border-card"
+                                style={{ backgroundColor: previewPrimary || "#4f46e5" }}
+                              />
+                              <div
+                                className="w-6 h-6 rounded-full border-2 border-card"
+                                style={{ backgroundColor: previewAccent || "#06b6d4" }}
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{theme.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(theme.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                            {isActive && (
+                              <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center shrink-0">
+                                <Check className="w-4 h-4 text-accent-foreground" />
+                              </div>
+                            )}
+                          </button>
+
+                          {/* Theme Actions */}
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const css = exportThemeToCSS(theme);
+                                navigator.clipboard.writeText(css);
+                              }}
+                              title="Copy CSS"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                            >
+                              <Copy className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (confirm(`Delete "${theme.name}"?`)) {
+                                  removeCustomTheme(theme.id);
+                                }
+                              }}
+                              title="Delete theme"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {customThemes.length === 0 && (
+                    <div className="text-center py-6 text-muted-foreground">
+                      <Palette className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                      <p className="text-sm">No custom themes yet</p>
+                      <p className="text-xs mt-1">
+                        Import a theme from tweakcn.com to get started
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* Desktop Settings */}
@@ -639,6 +834,261 @@ export default function SettingsPage() {
                       onCheckedChange={(checked) => updateDesktopSettings({ coloredIcons: checked })}
                     />
                   </div>
+                </CardContent>
+              </Card>
+
+              {/* Background Settings Card */}
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Image className="w-5 h-5 text-accent" />
+                    Desktop Background
+                  </CardTitle>
+                  <CardDescription>
+                    Customize your desktop background with colors, gradients, or images
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Background Type Selector */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {(["default", "color", "gradient", "image"] as BackgroundType[]).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => updateDesktopSettings({ backgroundType: type })}
+                        className={`
+                          p-3 rounded-lg border-2 transition-all duration-200 text-center
+                          ${settings.desktop.backgroundType === type
+                            ? "border-accent bg-accent/10"
+                            : "border-border/60 hover:border-accent/50"
+                          }
+                        `}
+                      >
+                        <span className="text-xs capitalize">{type}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Color Picker - shown when type is "color" */}
+                  {settings.desktop.backgroundType === "color" && (
+                    <div className="space-y-3">
+                      <Label>Background Color</Label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="color"
+                          value={settings.desktop.backgroundColor}
+                          onChange={(e) => updateDesktopSettings({ backgroundColor: e.target.value })}
+                          className="w-12 h-12 rounded-lg border border-border cursor-pointer"
+                        />
+                        <input
+                          type="text"
+                          value={settings.desktop.backgroundColor}
+                          onChange={(e) => updateDesktopSettings({ backgroundColor: e.target.value })}
+                          placeholder="#1a1a2e"
+                          className="flex-1 px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-sm font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Gradient Presets - shown when type is "gradient" */}
+                  {settings.desktop.backgroundType === "gradient" && (
+                    <div className="space-y-3">
+                      <Label>Gradient Presets</Label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { name: "Deep Space", value: "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)" },
+                          { name: "Midnight", value: "linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #2d2d44 100%)" },
+                          { name: "Ocean", value: "linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%)" },
+                          { name: "Sunset", value: "linear-gradient(135deg, #1a1a2e 0%, #2d1f3d 50%, #4a1942 100%)" },
+                          { name: "Forest", value: "linear-gradient(135deg, #0d1f0d 0%, #1a2f1a 50%, #2d4a2d 100%)" },
+                          { name: "Crimson", value: "linear-gradient(135deg, #1a0a0a 0%, #2d1515 50%, #4a1f1f 100%)" },
+                          { name: "Aurora", value: "linear-gradient(135deg, #0f0f23 0%, #1a1a3e 25%, #0f3d3d 75%, #1a2f1a 100%)" },
+                          { name: "Nebula", value: "linear-gradient(135deg, #1a0a2e 0%, #2d1f4a 50%, #0f2d4a 100%)" },
+                        ].map((preset) => (
+                          <button
+                            key={preset.name}
+                            onClick={() => updateDesktopSettings({ backgroundGradient: preset.value })}
+                            className={`
+                              h-16 rounded-lg border-2 transition-all duration-200 relative overflow-hidden
+                              ${settings.desktop.backgroundGradient === preset.value
+                                ? "border-accent ring-2 ring-accent/50"
+                                : "border-border/60 hover:border-accent/50"
+                              }
+                            `}
+                            style={{ background: preset.value }}
+                            title={preset.name}
+                          >
+                            <span className="absolute bottom-1 left-1 right-1 text-[10px] text-white/70 truncate">
+                              {preset.name}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-muted-foreground">Or enter custom CSS gradient</Label>
+                        <input
+                          type="text"
+                          value={settings.desktop.backgroundGradient}
+                          onChange={(e) => updateDesktopSettings({ backgroundGradient: e.target.value })}
+                          placeholder="linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)"
+                          className="w-full px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-sm font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Image URL/Upload - shown when type is "image" */}
+                  {settings.desktop.backgroundType === "image" && (
+                    <div className="space-y-3">
+                      <Label>Background Image</Label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={settings.desktop.backgroundImage}
+                          onChange={(e) => updateDesktopSettings({ backgroundImage: e.target.value })}
+                          placeholder="Enter image URL or path (e.g., /api/files/backgrounds/image.jpg)"
+                          className="flex-1 px-3 py-2 rounded-lg border border-border/60 bg-background/50 text-sm"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          id="bg-upload"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file || !token || !user) return;
+
+                            setIsUploadingBg(true);
+                            const backgroundsPath = `/home/${user.username}/backgrounds`;
+
+                            try {
+                              // First, ensure the backgrounds directory exists
+                              await fetch("/api/files/mkdir", {
+                                method: "POST",
+                                headers: {
+                                  Authorization: `Bearer ${token}`,
+                                  "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify({
+                                  path: `/home/${user.username}`,
+                                  name: "backgrounds",
+                                }),
+                              });
+
+                              // Upload with path as form data (not query param)
+                              const formData = new FormData();
+                              formData.append("file", file);
+                              formData.append("path", backgroundsPath);
+
+                              const response = await fetch("/api/files/upload", {
+                                method: "POST",
+                                headers: { Authorization: `Bearer ${token}` },
+                                body: formData,
+                              });
+
+                              if (response.ok) {
+                                const imagePath = `/api/files/download?path=${backgroundsPath}/${file.name}`;
+                                updateDesktopSettings({ backgroundImage: imagePath });
+                                // Refresh the gallery
+                                fetchUploadedBackgrounds();
+                              } else {
+                                const err = await response.json().catch(() => ({}));
+                                alert(err.error || "Failed to upload image");
+                              }
+                            } catch {
+                              alert("Failed to upload image");
+                            } finally {
+                              setIsUploadingBg(false);
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => document.getElementById("bg-upload")?.click()}
+                          disabled={isUploadingBg}
+                          className="gap-2 border-border/60"
+                        >
+                          {isUploadingBg ? (
+                            <Activity className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <ImagePlus className="w-4 h-4" />
+                          )}
+                          {isUploadingBg ? "Uploading..." : "Upload Image"}
+                        </Button>
+                        {settings.desktop.backgroundImage && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateDesktopSettings({ backgroundImage: "" })}
+                            className="gap-2 border-border/60 text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Gallery of uploaded backgrounds */}
+                      {uploadedBackgrounds.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Your Uploaded Backgrounds</Label>
+                          <div className="grid grid-cols-4 gap-2">
+                            {uploadedBackgrounds.map((imgUrl) => {
+                              const isSelected = settings.desktop.backgroundImage === imgUrl;
+                              return (
+                                <button
+                                  key={imgUrl}
+                                  onClick={() => updateDesktopSettings({ backgroundImage: imgUrl })}
+                                  className={`
+                                    relative h-16 rounded-lg border-2 overflow-hidden transition-all duration-200
+                                    ${isSelected
+                                      ? "border-accent ring-2 ring-accent/50"
+                                      : "border-border/60 hover:border-accent/50"
+                                    }
+                                  `}
+                                  style={{
+                                    backgroundImage: `url(${imgUrl})`,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: "center",
+                                  }}
+                                >
+                                  {isSelected && (
+                                    <div className="absolute inset-0 bg-accent/20 flex items-center justify-center">
+                                      <Check className="w-5 h-5 text-accent" />
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {settings.desktop.backgroundImage && (
+                        <div className="mt-2">
+                          <Label className="text-xs text-muted-foreground mb-2 block">Current Background Preview</Label>
+                          <div
+                            className="h-32 rounded-lg border border-border/60 overflow-hidden"
+                            style={{
+                              backgroundImage: `url(${settings.desktop.backgroundImage})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "center",
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Preview for default */}
+                  {settings.desktop.backgroundType === "default" && (
+                    <p className="text-sm text-muted-foreground">
+                      Using the default Stardeck OS background with grid pattern.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

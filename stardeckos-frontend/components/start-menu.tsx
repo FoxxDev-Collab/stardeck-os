@@ -24,6 +24,7 @@ import {
   Server,
   Terminal,
   FileText,
+  Network,
 } from "lucide-react";
 
 interface NavItem {
@@ -56,6 +57,7 @@ const navSections: NavSection[] = [
       { name: "System Monitor", href: "/system-monitor", icon: Activity },
       { name: "Process Manager", href: "/process-manager", icon: ListChecks },
       { name: "Service Manager", href: "/service-manager", icon: Settings },
+      { name: "Network Manager", href: "/network-manager", icon: Network },
       { name: "RPM Manager", href: "/rpm-manager", icon: Package },
       { name: "Storage Viewer", href: "/storage-viewer", icon: HardDrive },
       { name: "File Browser", href: "/file-browser", icon: FolderOpen },

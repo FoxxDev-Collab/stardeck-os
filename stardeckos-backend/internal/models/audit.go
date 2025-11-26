@@ -78,4 +78,15 @@ const (
 	ActionUnmount        = "storage.unmount"
 	ActionSystemReboot   = "system.reboot"
 	ActionSessionRevoke  = "session.revoke"
+
+	// Network management actions
+	ActionNetworkConfigure   = "network.configure"
+	ActionRouteAdd           = "network.route.add"
+	ActionRouteDelete        = "network.route.delete"
+	ActionFirewallRuleCreate = "firewall.rule.create"
+	ActionFirewallRuleUpdate = "firewall.rule.update"
+	ActionFirewallRuleDelete = "firewall.rule.delete"
+	ActionFirewallZoneCreate = "firewall.zone.create"
+	ActionFirewallZoneUpdate = "firewall.zone.update"
+	ActionFirewallZoneDelete = "firewall.zone.delete"
 )

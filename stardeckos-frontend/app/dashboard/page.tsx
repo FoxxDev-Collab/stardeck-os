@@ -18,6 +18,7 @@ import {
   Globe,
   Terminal,
   FileText,
+  Network,
 } from "lucide-react";
 
 interface DesktopApp {
@@ -54,6 +55,14 @@ const desktopApps: DesktopApp[] = [
     href: "/service-manager",
     description: "Control systemd services",
     color: "text-chart-5",
+  },
+  {
+    id: "network-manager",
+    icon: <Network className="w-8 h-8" />,
+    label: "Network Manager",
+    href: "/network-manager",
+    description: "Manage network interfaces, firewall, and routes",
+    color: "text-blue-400",
   },
   {
     id: "rpm-manager",

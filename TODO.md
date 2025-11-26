@@ -70,6 +70,33 @@
 
 ## In Progress
 
+### Troubleshooting Required
+
+#### Background Image Upload (Settings Page)
+**Issue**: Background image upload returns 400 error
+**Status**: Code fix implemented but not yet verified working
+
+**Root Cause Identified**:
+1. Original code used wrong path `/backgrounds` (web users restricted to `/home/<username>/`)
+2. Original code passed path as query param instead of form data
+
+**Fixes Applied** (in `app/settings/page.tsx`):
+- Changed path to `/home/${user.username}/backgrounds`
+- Path sent as form data via `formData.append("path", backgroundsPath)`
+- Directory auto-created via `/api/files/mkdir` before upload
+- Added uploaded backgrounds gallery for easy selection
+
+**Verification Steps**:
+1. Rebuild frontend: `cd stardeckos-frontend && npm run build`
+2. Copy to backend: `cp -r out/* ../stardeckos-backend/frontend_dist/`
+3. **CRITICAL**: Rebuild Go backend to embed new frontend: `cd stardeckos-backend && go build -mod=vendor -o stardeckos .`
+4. Restart the stardeckos service/process
+5. Test upload - server logs should show `POST /api/files/upload` (no query param)
+
+**Note**: The Go binary uses `go:embed` to embed frontend files at compile time. Simply rebuilding the frontend is NOT enough - the backend must also be recompiled.
+
+---
+
 ### Backend Features
 - [ ] LDAP/AD integration implementation (hooks ready, needs connector)
 - [ ] OIDC/SAML integration implementation (hooks ready, needs connector)

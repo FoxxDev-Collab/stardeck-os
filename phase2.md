@@ -2,13 +2,204 @@
 
 ## Overview
 
-**Focus:** Container management with Podman  
-**Goal:** Transform Stardeck into a container desktop OS where deployed containers appear as desktop applications  
+**Focus:** Container management with Podman + System Network Management
+**Goal:** Transform Stardeck into a container desktop OS where deployed containers appear as desktop applications
 **Principle:** Infrastructure as desktop, not app marketplace
 
 ---
 
-## Core Concept
+## Role & Permission Enforcement
+
+Phase 2 follows the established Stardeck permission model from Phase 1. All new features must enforce proper role-based access control.
+
+### Permission Hierarchy
+
+| Role | Container Management | Network Management | Description |
+|------|---------------------|-------------------|-------------|
+| **Admin** | Full access | Full access | Create, edit, delete, deploy, configure all |
+| **Operator** | Start/stop/restart, view logs, view config | View interfaces, view firewall rules | Operational tasks only |
+| **Viewer** | Read-only (list, view logs, view stats) | Read-only (view interfaces, view rules) | No modifications |
+
+### User Type Restrictions
+
+- **System Users** (`auth_type: pam`): Full access to container and network management (subject to role)
+- **Web Users** (`auth_type: local`, `user_type: web`): No access to container or network management
+
+### Backend Enforcement
+
+All container and network API endpoints must:
+
+1. Use `auth.RequireAuth(authSvc)` middleware
+2. Use `auth.RequireSystemUser()` middleware (blocks web users)
+3. Apply role-specific middleware:
+   - Read operations: Allow all roles (viewer+)
+   - Start/stop/restart: `auth.RequireOperatorOrAdmin()`
+   - Create/edit/delete: `auth.RequireRole(models.RoleAdmin)` or `auth.RequireWheelOrRoot(authSvc)`
+
+### Frontend Enforcement
+
+1. **Route Protection**: Redirect non-system users away from container/network pages
+2. **UI Gating**: Hide action buttons based on role
+3. **Disabled States**: Show but disable actions user cannot perform
+
+### Audit Logging
+
+All state-changing operations must be logged:
+
+```go
+// Container actions
+ActionContainerCreate  = "container.create"
+ActionContainerStart   = "container.start"
+ActionContainerStop    = "container.stop"
+ActionContainerRestart = "container.restart"
+ActionContainerRemove  = "container.remove"
+ActionContainerUpdate  = "container.update"
+ActionImagePull        = "image.pull"
+ActionImageRemove      = "image.remove"
+ActionTemplateCreate   = "template.create"
+ActionTemplateDelete   = "template.delete"
+ActionTemplateDeploy   = "template.deploy"
+
+// Network actions (system network, not podman network)
+ActionFirewallRuleCreate = "firewall.rule.create"
+ActionFirewallRuleUpdate = "firewall.rule.update"
+ActionFirewallRuleDelete = "firewall.rule.delete"
+ActionFirewallZoneCreate = "firewall.zone.create"
+ActionFirewallZoneUpdate = "firewall.zone.update"
+ActionFirewallZoneDelete = "firewall.zone.delete"
+ActionNetworkConfigure   = "network.configure"
+```
+
+---
+
+## Phase 2A: System Network Manager (Server Management)
+
+Final server management page - provides comprehensive network configuration.
+
+### Functionality
+
+**Network Interfaces:**
+- List all network interfaces (physical, virtual, bridges, bonds)
+- View interface details: IP addresses (IPv4/IPv6), MAC, MTU, state, speed
+- Enable/disable interfaces (admin only)
+- View real-time traffic statistics per interface
+
+**Firewall Management (firewalld):**
+- List all zones and their configurations
+- View/edit zone settings:
+  - Interfaces assigned to zone
+  - Services allowed
+  - Ports allowed (port/protocol)
+  - Rich rules
+  - Masquerading, forwarding settings
+- Create/delete custom zones (admin only)
+- Add/remove firewall rules (admin only)
+- View active rules
+- Reload firewall configuration
+
+**Routing:**
+- View routing table
+- View default gateway
+- Add/remove static routes (admin only)
+
+**DNS Configuration:**
+- View current DNS servers
+- View /etc/resolv.conf contents
+- View hostname and FQDN
+
+**Network Connections:**
+- View active connections (netstat/ss style)
+- Filter by state, protocol, port
+- View listening ports
+
+### Implementation
+
+**Backend:**
+- Use `firewalld` D-Bus API or `firewall-cmd` CLI
+- Parse `/sys/class/net/` for interface info
+- Use `ip` command for routing and interface details
+- Parse `/proc/net/` for connection info
+
+**Go packages:**
+```
+github.com/godbus/dbus/v5  (for firewalld D-Bus)
+```
+
+### API Structure
+
+```
+/api/network
+├── /interfaces
+│   ├── GET /                    # List all interfaces
+│   ├── GET /:name               # Interface details
+│   ├── GET /:name/stats         # Interface statistics
+│   └── POST /:name/state        # Enable/disable (admin)
+├── /firewall
+│   ├── GET /status              # Firewall running status
+│   ├── GET /zones               # List all zones
+│   ├── GET /zones/:zone         # Zone details
+│   ├── POST /zones              # Create zone (admin)
+│   ├── PUT /zones/:zone         # Update zone (admin)
+│   ├── DELETE /zones/:zone      # Delete zone (admin)
+│   ├── GET /zones/:zone/rules   # List zone rules
+│   ├── POST /zones/:zone/rules  # Add rule (admin)
+│   ├── DELETE /zones/:zone/rules/:id  # Remove rule (admin)
+│   ├── POST /zones/:zone/services     # Add service (admin)
+│   ├── DELETE /zones/:zone/services/:svc  # Remove service (admin)
+│   ├── POST /zones/:zone/ports        # Add port (admin)
+│   ├── DELETE /zones/:zone/ports/:port  # Remove port (admin)
+│   └── POST /reload             # Reload firewall (admin)
+├── /routes
+│   ├── GET /                    # List routes
+│   ├── POST /                   # Add route (admin)
+│   └── DELETE /:id              # Remove route (admin)
+├── /dns
+│   └── GET /                    # DNS configuration
+└── /connections
+    └── GET /                    # Active connections (query: state, protocol)
+```
+
+### Permission Matrix
+
+| Endpoint | Viewer | Operator | Admin |
+|----------|--------|----------|-------|
+| GET /interfaces | ✓ | ✓ | ✓ |
+| POST /interfaces/:name/state | ✗ | ✗ | ✓ |
+| GET /firewall/* | ✓ | ✓ | ✓ |
+| POST/PUT/DELETE /firewall/* | ✗ | ✗ | ✓ |
+| GET /routes | ✓ | ✓ | ✓ |
+| POST/DELETE /routes | ✗ | ✗ | ✓ |
+| GET /dns | ✓ | ✓ | ✓ |
+| GET /connections | ✓ | ✓ | ✓ |
+
+### Frontend Structure
+
+```
+/app/network-manager/
+├── page.tsx                     # Network Manager main window
+└── components/
+    ├── InterfaceList.tsx        # Network interfaces tab
+    ├── InterfaceDetail.tsx      # Interface detail panel
+    ├── FirewallZones.tsx        # Firewall zones tab
+    ├── ZoneEditor.tsx           # Zone configuration editor
+    ├── RuleEditor.tsx           # Firewall rule editor
+    ├── RoutingTable.tsx         # Routes tab
+    ├── DNSConfig.tsx            # DNS information
+    └── ConnectionList.tsx       # Active connections tab
+```
+
+### UI Tabs
+
+1. **Interfaces** - List of network interfaces with status indicators
+2. **Firewall** - Zone management, rules, services, ports
+3. **Routes** - Routing table with add/remove capability
+4. **Connections** - Active network connections
+
+---
+
+## Phase 2B: Container Management
+
+Core Concept
 
 Users deploy containers via compose files or direct configuration. Each container with a web UI becomes a desktop app, accessible through the Stardeck proxy without exposing ports externally.
 
@@ -603,12 +794,74 @@ CREATE UNIQUE INDEX idx_env_container_key ON container_env_vars(container_id, ke
     â””â”€â”€ GET /info                    # File/directory info
 ```
 
+### Container API Permission Matrix
+
+| Endpoint | Viewer | Operator | Admin |
+|----------|--------|----------|-------|
+| GET /containers | ✓ | ✓ | ✓ |
+| GET /containers/:id | ✓ | ✓ | ✓ |
+| POST /containers (create/deploy) | ✗ | ✗ | ✓ |
+| PUT /containers/:id (update) | ✗ | ✗ | ✓ |
+| DELETE /containers/:id | ✗ | ✗ | ✓ |
+| POST /containers/:id/start | ✗ | ✓ | ✓ |
+| POST /containers/:id/stop | ✗ | ✓ | ✓ |
+| POST /containers/:id/restart | ✗ | ✓ | ✓ |
+| GET /containers/:id/logs | ✓ | ✓ | ✓ |
+| GET /containers/:id/stats | ✓ | ✓ | ✓ |
+| GET /containers/:id/metrics | ✓ | ✓ | ✓ |
+| GET /containers/:id/compose | ✓ | ✓ | ✓ |
+| PUT /containers/:id/compose | ✗ | ✗ | ✓ |
+| GET /containers/:id/proxy/* | ✓ | ✓ | ✓ |
+| GET /images | ✓ | ✓ | ✓ |
+| POST /images/pull | ✗ | ✗ | ✓ |
+| DELETE /images/:id | ✗ | ✗ | ✓ |
+| GET /volumes | ✓ | ✓ | ✓ |
+| POST /volumes | ✗ | ✗ | ✓ |
+| DELETE /volumes/:id | ✗ | ✗ | ✓ |
+| GET /networks (podman) | ✓ | ✓ | ✓ |
+| POST /networks (podman) | ✗ | ✗ | ✓ |
+| DELETE /networks/:id | ✗ | ✗ | ✓ |
+| GET /templates | ✓ | ✓ | ✓ |
+| POST /templates | ✗ | ✗ | ✓ |
+| PUT /templates/:id | ✗ | ✗ | ✓ |
+| DELETE /templates/:id | ✗ | ✗ | ✓ |
+| POST /templates/:id/deploy | ✗ | ✗ | ✓ |
+| POST /compose/deploy | ✗ | ✗ | ✓ |
+| POST /compose/parse | ✓ | ✓ | ✓ |
+| POST /compose/validate | ✓ | ✓ | ✓ |
+| GET /filesystem/browse | ✓ | ✓ | ✓ |
+| POST /filesystem/mkdir | ✗ | ✗ | ✓ |
+
+**Note:** All container/podman endpoints require `SystemUser` - web users are blocked entirely.
+
 ---
 
 ## Frontend Structure
 
+### Network Manager (Phase 2A)
+
 ```
-/app/desktop/apps/containers/
+/app/network-manager/
+├── page.tsx                         # Network Manager main window
+└── components/
+    ├── InterfaceList.tsx            # Network interfaces list
+    ├── InterfaceDetail.tsx          # Interface details panel
+    ├── InterfaceStats.tsx           # Traffic statistics
+    ├── FirewallZones.tsx            # Firewall zones list
+    ├── ZoneEditor.tsx               # Zone configuration editor
+    ├── ZoneRules.tsx                # Rich rules editor
+    ├── ServiceSelector.tsx          # Allowed services picker
+    ├── PortEditor.tsx               # Port rules editor
+    ├── RoutingTable.tsx             # Routes list
+    ├── RouteEditor.tsx              # Add/edit route
+    ├── DNSInfo.tsx                  # DNS configuration view
+    └── ConnectionList.tsx           # Active connections
+```
+
+### Container Manager (Phase 2B)
+
+```
+/app/container-manager/
 â”œâ”€â”€ page.tsx                         # Container Manager main window
 â”œâ”€â”€ components/
 â”‚   â”œâ”€â”€ ContainerList.tsx            # Installed tab
@@ -725,20 +978,28 @@ CREATE UNIQUE INDEX idx_env_container_key ON container_env_vars(container_id, ke
 
 | Milestone | Deliverable |
 |-----------|-------------|
-| M2.1 | Podman integration (list, create, start, stop, remove) |
-| M2.2 | Container Manager UI (basic list and actions) |
-| M2.3 | Compose parser and validator |
-| M2.4 | Visual config editor (ports, volumes, env vars) |
-| M2.5 | Monaco code editor integration |
-| M2.6 | File browser component |
-| M2.7 | Environment variable manager with secrets |
-| M2.8 | Volume and network management |
-| M2.9 | Web UI proxy system |
-| M2.10 | Desktop icon integration |
-| M2.11 | Template system |
-| M2.12 | Real-time logs and stats |
-| M2.13 | Testing with complex multi-container apps |
-| M2.14 | Documentation and user guide |
+| **Phase 2A: Network Manager** |
+| M2A.1 | Network interfaces API (list, details, stats) |
+| M2A.2 | Firewall API (zones, rules, services, ports via firewalld) |
+| M2A.3 | Routes and DNS API |
+| M2A.4 | Network Manager UI (interfaces tab) |
+| M2A.5 | Firewall UI (zones, rules editor) |
+| M2A.6 | Routes and connections UI |
+| **Phase 2B: Container Management** |
+| M2B.1 | Podman integration (list, create, start, stop, remove) |
+| M2B.2 | Container Manager UI (basic list and actions) |
+| M2B.3 | Compose parser and validator |
+| M2B.4 | Visual config editor (ports, volumes, env vars) |
+| M2B.5 | Monaco code editor integration |
+| M2B.6 | File browser component |
+| M2B.7 | Environment variable manager with secrets |
+| M2B.8 | Podman volume and network management |
+| M2B.9 | Web UI proxy system |
+| M2B.10 | Desktop icon integration |
+| M2B.11 | Template system |
+| M2B.12 | Real-time logs and stats |
+| M2B.13 | Testing with complex multi-container apps |
+| M2B.14 | Documentation and user guide |
 
 ---
 
@@ -849,10 +1110,40 @@ recharts (for stats graphs, if not already included)
 Phase 2 is additive - no breaking changes to Phase 1:
 
 - Existing system management features remain unchanged
+- New "Network Manager" app appears in Server Management menu
 - New "Container Manager" app appears in desktop
-- New API endpoints under `/api/containers`, etc.
-- Database schema additions (new tables)
+- New API endpoints:
+  - `/api/network/*` - System network and firewall management
+  - `/api/containers/*`, `/api/images/*`, `/api/volumes/*`, `/api/templates/*` - Container management
+- Database schema additions (new tables for containers, volumes, networks, templates)
 - Optional: suggest Podman installation if not present
+
+### Start Menu Integration
+
+**Server Management section** (add Network Manager as final item):
+```typescript
+{
+  name: "Server Management",
+  icon: Server,
+  systemUserOnly: true,
+  items: [
+    // ... existing items ...
+    { name: "Network Manager", href: "/network-manager", icon: Network },
+  ],
+}
+```
+
+**Desktop icons** (add Container Manager):
+```typescript
+{
+  id: "container-manager",
+  icon: <Box className="w-8 h-8" />,
+  label: "Containers",
+  href: "/container-manager",
+  description: "Deploy and manage Podman containers",
+  color: "text-purple-500",
+}
+```
 
 ---
 

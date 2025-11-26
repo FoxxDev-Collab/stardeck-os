@@ -1,9 +1,18 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import {
+  CustomTheme,
+  ParsedThemeVariables,
+  applyThemeVariables,
+  clearThemeVariables,
+  getThemeableVariables,
+} from "./theme-parser";
 
 export type TaskbarPosition = "top" | "bottom";
 export type AccentColor = "cyan" | "amber" | "green" | "purple" | "red";
+
+export type { CustomTheme, ParsedThemeVariables };
 
 export interface TraySettings {
   showCpu: boolean;
@@ -18,6 +27,7 @@ export interface ThemeSettings {
   enableScanlines: boolean;
   enableGlow: boolean;
   enableAnimations: boolean;
+  activeCustomThemeId: string | null; // ID of active custom theme, or null for default
 }
 
 // Accent color definitions in OKLCH format
@@ -54,11 +64,17 @@ const accentColors: Record<AccentColor, { light: string; dark: string; lightFore
   },
 };
 
+export type BackgroundType = "default" | "color" | "gradient" | "image";
+
 export interface DesktopSettings {
   iconSize: "small" | "medium" | "large";
   showLabels: boolean;
   gridSpacing: "compact" | "normal" | "relaxed";
   coloredIcons: boolean;
+  backgroundType: BackgroundType;
+  backgroundColor: string; // hex color for solid backgrounds
+  backgroundGradient: string; // CSS gradient string
+  backgroundImage: string; // URL or path to image
 }
 
 export interface Settings {
@@ -82,12 +98,17 @@ const defaultSettings: Settings = {
     enableScanlines: false,
     enableGlow: true,
     enableAnimations: true,
+    activeCustomThemeId: null,
   },
   desktop: {
     iconSize: "medium",
     showLabels: true,
     gridSpacing: "normal",
     coloredIcons: true,
+    backgroundType: "default",
+    backgroundColor: "#1a1a2e",
+    backgroundGradient: "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)",
+    backgroundImage: "",
   },
 };
 
@@ -98,23 +119,42 @@ interface SettingsContextType {
   updateThemeSettings: (updates: Partial<ThemeSettings>) => void;
   updateDesktopSettings: (updates: Partial<DesktopSettings>) => void;
   resetSettings: () => void;
+  // Custom theme management
+  customThemes: CustomTheme[];
+  addCustomTheme: (theme: CustomTheme) => void;
+  removeCustomTheme: (themeId: string) => void;
+  applyCustomTheme: (themeId: string | null) => void;
+  getActiveCustomTheme: () => CustomTheme | null;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
 const STORAGE_KEY = "stardeck-settings";
+const CUSTOM_THEMES_KEY = "stardeck-custom-themes";
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load settings from localStorage on mount
+  // Load settings and custom themes from localStorage on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
+        // Ensure theme has activeCustomThemeId (migration)
+        if (parsed.theme && parsed.theme.activeCustomThemeId === undefined) {
+          parsed.theme.activeCustomThemeId = null;
+        }
         setSettings({ ...defaultSettings, ...parsed });
+      }
+
+      // Load custom themes
+      const storedThemes = localStorage.getItem(CUSTOM_THEMES_KEY);
+      if (storedThemes) {
+        const parsedThemes = JSON.parse(storedThemes);
+        setCustomThemes(parsedThemes);
       }
     } catch (e) {
       console.error("Failed to load settings:", e);
@@ -133,23 +173,48 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [settings, isLoaded]);
 
-  // Apply accent color to CSS variables
+  // Save custom themes to localStorage on change
+  useEffect(() => {
+    if (isLoaded) {
+      try {
+        localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(customThemes));
+      } catch (e) {
+        console.error("Failed to save custom themes:", e);
+      }
+    }
+  }, [customThemes, isLoaded]);
+
+  // Apply theme (custom theme or accent color) to CSS variables
   useEffect(() => {
     if (!isLoaded) return;
 
     const root = document.documentElement;
-    const colorDef = accentColors[settings.theme.accentColor];
     const isDark = root.classList.contains("dark");
 
-    // Apply accent color
-    root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
-    root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
+    // Check if a custom theme is active
+    const activeTheme = settings.theme.activeCustomThemeId
+      ? customThemes.find(t => t.id === settings.theme.activeCustomThemeId)
+      : null;
 
-    // Also update ring color to match accent
-    root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
-  }, [settings.theme.accentColor, isLoaded]);
+    if (activeTheme) {
+      // Apply custom theme variables
+      const variables = isDark ? activeTheme.darkVariables : activeTheme.lightVariables;
+      // If dark mode but no dark variables, fall back to light
+      const fallbackVariables = Object.keys(variables).length > 0 ? variables : activeTheme.lightVariables;
+      applyThemeVariables(fallbackVariables, isDark);
+    } else {
+      // Clear any custom theme variables first
+      clearThemeVariables(getThemeableVariables());
 
-  // Watch for dark mode changes and reapply colors
+      // Apply default accent color
+      const colorDef = accentColors[settings.theme.accentColor];
+      root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
+      root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
+      root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
+    }
+  }, [settings.theme.accentColor, settings.theme.activeCustomThemeId, customThemes, isLoaded]);
+
+  // Watch for dark mode changes and reapply theme
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -157,19 +222,31 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       mutations.forEach((mutation) => {
         if (mutation.type === "attributes" && mutation.attributeName === "class") {
           const root = document.documentElement;
-          const colorDef = accentColors[settings.theme.accentColor];
           const isDark = root.classList.contains("dark");
 
-          root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
-          root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
-          root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
+          // Check if a custom theme is active
+          const activeTheme = settings.theme.activeCustomThemeId
+            ? customThemes.find(t => t.id === settings.theme.activeCustomThemeId)
+            : null;
+
+          if (activeTheme) {
+            // Apply custom theme variables for the new mode
+            const variables = isDark ? activeTheme.darkVariables : activeTheme.lightVariables;
+            const fallbackVariables = Object.keys(variables).length > 0 ? variables : activeTheme.lightVariables;
+            applyThemeVariables(fallbackVariables, isDark);
+          } else {
+            const colorDef = accentColors[settings.theme.accentColor];
+            root.style.setProperty("--accent", isDark ? colorDef.dark : colorDef.light);
+            root.style.setProperty("--accent-foreground", isDark ? colorDef.darkForeground : colorDef.lightForeground);
+            root.style.setProperty("--ring", isDark ? colorDef.dark : colorDef.light);
+          }
         }
       });
     });
 
     observer.observe(document.documentElement, { attributes: true });
     return () => observer.disconnect();
-  }, [settings.theme.accentColor, isLoaded]);
+  }, [settings.theme.accentColor, settings.theme.activeCustomThemeId, customThemes, isLoaded]);
 
   const updateSettings = (updates: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...updates }));
@@ -200,6 +277,28 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setSettings(defaultSettings);
   };
 
+  // Custom theme management functions
+  const addCustomTheme = (theme: CustomTheme) => {
+    setCustomThemes((prev) => [...prev, theme]);
+  };
+
+  const removeCustomTheme = (themeId: string) => {
+    // If the theme being removed is active, clear the active theme
+    if (settings.theme.activeCustomThemeId === themeId) {
+      updateThemeSettings({ activeCustomThemeId: null });
+    }
+    setCustomThemes((prev) => prev.filter((t) => t.id !== themeId));
+  };
+
+  const applyCustomTheme = (themeId: string | null) => {
+    updateThemeSettings({ activeCustomThemeId: themeId });
+  };
+
+  const getActiveCustomTheme = (): CustomTheme | null => {
+    if (!settings.theme.activeCustomThemeId) return null;
+    return customThemes.find((t) => t.id === settings.theme.activeCustomThemeId) || null;
+  };
+
   return (
     <SettingsContext.Provider
       value={{
@@ -209,6 +308,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         updateThemeSettings,
         updateDesktopSettings,
         resetSettings,
+        // Custom theme management
+        customThemes,
+        addCustomTheme,
+        removeCustomTheme,
+        applyCustomTheme,
+        getActiveCustomTheme,
       }}
     >
       {children}
