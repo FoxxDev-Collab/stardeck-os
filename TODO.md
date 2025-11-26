@@ -68,7 +68,33 @@
 - [x] **NEW: Mount/unmount controls for filesystems**
 - [x] **NEW: LVM volume groups and logical volumes display**
 
+### Phase 2A: Network Manager (Completed)
+- [x] M2A.1: Network interfaces API (list, details, stats)
+- [x] M2A.2: Firewall API (zones, rules, services, ports via firewalld)
+- [x] M2A.3: Routes and DNS API
+- [x] M2A.4: Network Manager UI (interfaces tab)
+- [x] M2A.5: Firewall UI (zones, rules editor)
+- [x] M2A.6: Routes and connections UI
+
 ## In Progress
+
+### Phase 2B: Container Management
+- [ ] M2B.1: Podman integration (list, create, start, stop, remove)
+- [ ] M2B.2: Container Manager UI (basic list and actions)
+- [ ] M2B.3: Compose parser and validator
+- [ ] M2B.4: Visual config editor (ports, volumes, env vars)
+- [ ] M2B.5: Monaco code editor integration
+- [ ] M2B.6: File browser component
+- [ ] M2B.7: Environment variable manager with secrets
+- [ ] M2B.8: Podman volume and network management
+- [ ] M2B.9: Web UI proxy system
+- [ ] M2B.10: Desktop icon integration
+- [ ] M2B.11: Template system
+- [ ] M2B.12: Real-time logs and stats
+- [ ] M2B.13: Testing with complex multi-container apps
+- [ ] M2B.14: Documentation and user guide
+
+---
 
 ### Troubleshooting Required
 

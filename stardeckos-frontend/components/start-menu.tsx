@@ -25,6 +25,7 @@ import {
   Terminal,
   FileText,
   Network,
+  Box,
 } from "lucide-react";
 
 interface NavItem {
@@ -58,6 +59,7 @@ const navSections: NavSection[] = [
       { name: "Process Manager", href: "/process-manager", icon: ListChecks },
       { name: "Service Manager", href: "/service-manager", icon: Settings },
       { name: "Network Manager", href: "/network-manager", icon: Network },
+      { name: "Container Manager", href: "/container-manager", icon: Box },
       { name: "RPM Manager", href: "/rpm-manager", icon: Package },
       { name: "Storage Viewer", href: "/storage-viewer", icon: HardDrive },
       { name: "File Browser", href: "/file-browser", icon: FolderOpen },
@@ -296,10 +298,10 @@ export function StartMenu({ isOpen, onClose }: StartMenuProps) {
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border/50 bg-background/40">
           <div className="text-center">
             <p className="text-xs text-muted-foreground/60 tracking-wider">
-              STARDECK OS v1.0.0
+              STARDECK OS v2.0.0
             </p>
             <p className="text-xs text-muted-foreground/60 mt-1">
-              <span className="text-accent">&gt;</span> PHASE 1
+              <span className="text-accent">&gt;</span> PHASE 2
             </p>
           </div>
         </div>

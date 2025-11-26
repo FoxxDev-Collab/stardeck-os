@@ -286,14 +286,139 @@ var migrations = []migration{
 		up: `
 			-- Add user_type column to users table
 			ALTER TABLE users ADD COLUMN user_type TEXT NOT NULL DEFAULT 'system';
-			
+
 			-- Create index on user_type for efficient filtering
 			CREATE INDEX idx_users_user_type ON users(user_type);
-			
+
 			-- Update existing users: PAM users with admin role become system users
 			-- Local users with admin role also become system users
 			-- Everyone else defaults to 'system' for backward compatibility
 			-- In production, you may want to manually set web users
+		`,
+	},
+	{
+		name: "011_create_containers",
+		up: `
+			CREATE TABLE containers (
+				id TEXT PRIMARY KEY,
+				container_id TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				image TEXT NOT NULL,
+				status TEXT DEFAULT 'created',
+				compose_file TEXT,
+				compose_path TEXT,
+				has_web_ui INTEGER DEFAULT 0,
+				web_ui_port INTEGER,
+				web_ui_path TEXT DEFAULT '/',
+				icon TEXT,
+				auto_start INTEGER DEFAULT 1,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				labels TEXT,
+				metadata TEXT
+			);
+			CREATE INDEX idx_containers_container_id ON containers(container_id);
+			CREATE INDEX idx_containers_name ON containers(name);
+			CREATE INDEX idx_containers_status ON containers(status);
+		`,
+	},
+	{
+		name: "012_create_podman_volumes",
+		up: `
+			CREATE TABLE podman_volumes (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				driver TEXT DEFAULT 'local',
+				mount_point TEXT,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				labels TEXT
+			);
+			CREATE INDEX idx_podman_volumes_name ON podman_volumes(name);
+		`,
+	},
+	{
+		name: "013_create_volume_containers",
+		up: `
+			CREATE TABLE volume_containers (
+				volume_id TEXT NOT NULL,
+				container_id TEXT NOT NULL,
+				PRIMARY KEY (volume_id, container_id),
+				FOREIGN KEY (volume_id) REFERENCES podman_volumes(id) ON DELETE CASCADE,
+				FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
+			);
+		`,
+	},
+	{
+		name: "014_create_podman_networks",
+		up: `
+			CREATE TABLE podman_networks (
+				id TEXT PRIMARY KEY,
+				network_id TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL,
+				driver TEXT DEFAULT 'bridge',
+				subnet TEXT,
+				gateway TEXT,
+				internal INTEGER DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				labels TEXT
+			);
+			CREATE INDEX idx_podman_networks_name ON podman_networks(name);
+		`,
+	},
+	{
+		name: "015_create_templates",
+		up: `
+			CREATE TABLE templates (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				description TEXT,
+				author TEXT,
+				version TEXT,
+				compose_content TEXT NOT NULL,
+				env_defaults TEXT,
+				volume_hints TEXT,
+				tags TEXT,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				usage_count INTEGER DEFAULT 0
+			);
+			CREATE INDEX idx_templates_name ON templates(name);
+		`,
+	},
+	{
+		name: "016_create_container_metrics",
+		up: `
+			CREATE TABLE container_metrics (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				container_id TEXT NOT NULL,
+				timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+				cpu_percent REAL,
+				memory_used INTEGER,
+				memory_limit INTEGER,
+				network_rx INTEGER,
+				network_tx INTEGER,
+				block_read INTEGER,
+				block_write INTEGER,
+				FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_container_metrics_container_time ON container_metrics(container_id, timestamp);
+		`,
+	},
+	{
+		name: "017_create_container_env_vars",
+		up: `
+			CREATE TABLE container_env_vars (
+				id TEXT PRIMARY KEY,
+				container_id TEXT NOT NULL,
+				key TEXT NOT NULL,
+				value TEXT NOT NULL,
+				is_secret INTEGER DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
+			);
+			CREATE UNIQUE INDEX idx_container_env_container_key ON container_env_vars(container_id, key);
 		`,
 	},
 }

@@ -15,6 +15,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	InitGroupRepo()
 	InitRealmRepo()
 	InitAuditRepo()
+	InitContainerRepos()
+	InitStackRepo()
 
 	// Store authSvc for use in handlers
 	authService = authSvc
@@ -183,6 +185,9 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	// Terminal WebSocket route (authentication handled inside handler due to WebSocket limitations)
 	api.GET("/terminal/ws", HandleTerminalWebSocket)
 
+	// Package operation WebSocket route (streaming DNF output)
+	api.GET("/packages/ws", HandlePackageOperationWebSocket)
+
 	// Network management routes
 	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage network
 	network := api.Group("/network")
@@ -221,4 +226,92 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 
 	// Active connections (read-only)
 	network.GET("/connections", listConnectionsHandler)
+
+	// Docker Hub image search (public endpoint with auth)
+	api.GET("/dockerhub/search", searchDockerHubHandler, auth.RequireAuth(authSvc))
+
+	// Port information endpoint (requires auth)
+	api.GET("/ports/used", listUsedPortsHandler, auth.RequireAuth(authSvc))
+
+	// Container management routes (Phase 2B)
+	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage containers
+	containers := api.Group("/containers")
+	containers.Use(auth.RequireAuth(authSvc))
+	containers.Use(auth.RequireSystemUser())
+
+	// Podman availability check
+	containers.GET("/check", checkPodmanHandler)
+
+	// Podman installation WebSocket (admin only)
+	containers.GET("/install", installPodmanHandler)
+
+	// Container operations (read: all system users, write: operator+, create/delete: admin)
+	containers.GET("", listContainersHandler)
+	containers.GET("/:id", getContainerHandler)
+	containers.POST("", createContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.PUT("/:id", updateContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.DELETE("/:id", removeContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.POST("/:id/start", startContainerHandler, auth.RequireOperatorOrAdmin())
+	containers.POST("/:id/stop", stopContainerHandler, auth.RequireOperatorOrAdmin())
+	containers.POST("/:id/restart", restartContainerHandler, auth.RequireOperatorOrAdmin())
+	containers.GET("/:id/logs", getContainerLogsHandler)
+	containers.GET("/:id/stats", getContainerStatsHandler)
+	containers.GET("/:id/metrics", getContainerMetricsHandler)
+
+	// Container web UI proxy (proxies to container's web interface)
+	containers.Any("/:id/proxy", proxyContainerWebUIHandler)
+	containers.Any("/:id/proxy/*", proxyContainerWebUIHandler)
+
+	// Image management (read: all, write: admin)
+	images := api.Group("/images")
+	images.Use(auth.RequireAuth(authSvc))
+	images.Use(auth.RequireSystemUser())
+	images.GET("", listImagesHandler)
+	images.POST("/pull", pullImageHandler, auth.RequireRole(models.RoleAdmin))
+	images.DELETE("/:id", removeImageHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Volume management (read: all, write: admin)
+	volumes := api.Group("/volumes")
+	volumes.Use(auth.RequireAuth(authSvc))
+	volumes.Use(auth.RequireSystemUser())
+	volumes.GET("", listVolumesHandler)
+	volumes.POST("", createVolumeHandler, auth.RequireRole(models.RoleAdmin))
+	volumes.DELETE("/:name", removeVolumeHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Podman network management (read: all, write: admin)
+	podmanNetworks := api.Group("/podman-networks")
+	podmanNetworks.Use(auth.RequireAuth(authSvc))
+	podmanNetworks.Use(auth.RequireSystemUser())
+	podmanNetworks.GET("", listPodmanNetworksHandler)
+	podmanNetworks.POST("", createPodmanNetworkHandler, auth.RequireRole(models.RoleAdmin))
+	podmanNetworks.DELETE("/:name", removePodmanNetworkHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Template management (read: all, write: admin)
+	templates := api.Group("/templates")
+	templates.Use(auth.RequireAuth(authSvc))
+	templates.Use(auth.RequireSystemUser())
+	templates.GET("", listTemplatesHandler)
+	templates.GET("/:id", getTemplateHandler)
+	templates.POST("", createTemplateHandler, auth.RequireRole(models.RoleAdmin))
+	templates.DELETE("/:id", deleteTemplateHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Stack management (compose-based deployments)
+	// RESTRICTED TO SYSTEM USERS ONLY - Web users cannot manage stacks
+	stacks := api.Group("/stacks")
+	stacks.Use(auth.RequireAuth(authSvc))
+	stacks.Use(auth.RequireSystemUser())
+	stacks.GET("", listStacksHandler)
+	stacks.GET("/:id", getStackHandler)
+	stacks.GET("/:id/containers", getStackContainersHandler)
+	stacks.POST("", createStackHandler, auth.RequireRole(models.RoleAdmin))
+	stacks.PUT("/:id", updateStackHandler, auth.RequireRole(models.RoleAdmin))
+	stacks.DELETE("/:id", deleteStackHandler, auth.RequireRole(models.RoleAdmin))
+	stacks.GET("/:id/deploy", deployStackHandler, auth.RequireRole(models.RoleAdmin)) // WebSocket
+	stacks.POST("/:id/start", startStackHandler, auth.RequireOperatorOrAdmin())
+	stacks.POST("/:id/stop", stopStackHandler, auth.RequireOperatorOrAdmin())
+	stacks.POST("/:id/restart", restartStackHandler, auth.RequireOperatorOrAdmin())
+	stacks.GET("/:id/pull", pullStackHandler, auth.RequireRole(models.RoleAdmin)) // WebSocket
+
+	// Desktop apps endpoint (containers with web UIs)
+	api.GET("/desktop-apps", listDesktopAppsHandler, auth.RequireAuth(authSvc), auth.RequireSystemUser())
 }

@@ -109,11 +109,11 @@ export default function TerminalPage() {
       }
 
       // Connect to WebSocket with auth token
-      // In development, Next.js runs on :3000 but backend is on :443 (HTTPS)
-      // In production, everything is served from the same port
+      // In development, Next.js runs on :3000 but backend is on :8080 (HTTP)
+      // In production, everything is served from the same port (HTTPS)
       const isDevMode = window.location.port === "3000";
-      const wsProtocol = isDevMode ? "wss:" : (window.location.protocol === "https:" ? "wss:" : "ws:");
-      const wsHost = isDevMode ? `${window.location.hostname}:443` : window.location.host;
+      const wsProtocol = isDevMode ? "ws:" : (window.location.protocol === "https:" ? "wss:" : "ws:");
+      const wsHost = isDevMode ? `${window.location.hostname}:8080` : window.location.host;
       const wsUrl = `${wsProtocol}//${wsHost}/api/terminal/ws?token=${encodeURIComponent(token)}`;
 
       console.log("Connecting to WebSocket:", wsUrl.replace(token, "***"));

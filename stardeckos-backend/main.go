@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -20,6 +21,57 @@ import (
 
 //go:embed frontend_dist/*
 var frontendFS embed.FS
+
+// staticFileHandler serves static files with proper handling for Next.js static export
+type staticFileHandler struct {
+	fs fs.FS
+}
+
+func (h *staticFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" {
+		path = "index.html"
+	}
+
+	// Try to open the exact file first
+	f, err := h.fs.Open(path)
+	if err == nil {
+		f.Close()
+		http.FileServer(http.FS(h.fs)).ServeHTTP(w, r)
+		return
+	}
+
+	// If it's a directory request (ends with /), try index.html inside it
+	if strings.HasSuffix(path, "/") {
+		indexPath := path + "index.html"
+		if f, err := h.fs.Open(indexPath); err == nil {
+			f.Close()
+			http.FileServer(http.FS(h.fs)).ServeHTTP(w, r)
+			return
+		}
+	}
+
+	// Try adding .html extension for clean URLs (Next.js static export creates .html files)
+	htmlPath := path + ".html"
+	if f, err := h.fs.Open(htmlPath); err == nil {
+		f.Close()
+		// Rewrite the request path to include .html
+		r.URL.Path = "/" + htmlPath
+		http.FileServer(http.FS(h.fs)).ServeHTTP(w, r)
+		return
+	}
+
+	// If nothing else works and it's not a static asset request, serve index.html for SPA routing
+	if !strings.Contains(path, ".") || strings.HasPrefix(path, "_next/") {
+		// For SPA routes without extensions, serve index.html
+		r.URL.Path = "/index.html"
+		http.FileServer(http.FS(h.fs)).ServeHTTP(w, r)
+		return
+	}
+
+	// Fall back to the default file server (will return 404 for non-existent files)
+	http.FileServer(http.FS(h.fs)).ServeHTTP(w, r)
+}
 
 func main() {
 	// Get database path from environment or default
@@ -71,10 +123,11 @@ func main() {
 	apiGroup := e.Group("/api")
 	api.RegisterRoutes(apiGroup, authSvc)
 
-	// Serve embedded frontend in production
+	// Serve embedded frontend in production with proper handling for Next.js static export
 	frontendContent, err := fs.Sub(frontendFS, "frontend_dist")
 	if err == nil {
-		e.GET("/*", echo.WrapHandler(http.FileServer(http.FS(frontendContent))))
+		handler := &staticFileHandler{fs: frontendContent}
+		e.GET("/*", echo.WrapHandler(handler))
 	}
 
 	// Get port from environment or default

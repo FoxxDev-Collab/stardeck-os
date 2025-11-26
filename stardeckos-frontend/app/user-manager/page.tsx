@@ -28,13 +28,36 @@ interface Group {
   description?: string;
 }
 
+// Password complexity validation
+const validatePassword = (password: string): { valid: boolean; errors: string[] } => {
+  const errors: string[] = [];
+
+  if (password.length < 8) {
+    errors.push("At least 8 characters");
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push("One uppercase letter");
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push("One lowercase letter");
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push("One number");
+  }
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+    errors.push("One special character");
+  }
+
+  return { valid: errors.length === 0, errors };
+};
+
 export default function UserManagerPage() {
   const { isAuthenticated, isLoading, user: currentUser, token } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
   const [users, setUsers] = useState<User[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newUser, setNewUser] = useState({ username: "", display_name: "", password: "", role: "viewer" as const });
+  const [newUser, setNewUser] = useState<{ username: string; display_name: string; password: string; role: "admin" | "operator" | "viewer" }>({ username: "", display_name: "", password: "", role: "viewer" });
   const [error, setError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -347,20 +370,23 @@ export default function UserManagerPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="username">Username</Label>
-                    <Input 
-                      id="username" 
-                      placeholder="Enter username" 
+                    <Input
+                      id="username"
+                      placeholder="Enter username"
                       value={newUser.username}
-                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value.toLowerCase().replace(/[^a-z0-9_\-]/g, '') })}
                       required
                       minLength={3}
+                      pattern="[a-z0-9_\-]+"
+                      title="Lowercase letters, numbers, underscores, and hyphens only"
                     />
+                    <p className="text-xs text-muted-foreground">Lowercase letters, numbers, _, -</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="display_name">Display Name</Label>
-                    <Input 
-                      id="display_name" 
-                      placeholder="Enter display name" 
+                    <Input
+                      id="display_name"
+                      placeholder="Enter display name"
                       value={newUser.display_name}
                       onChange={(e) => setNewUser({ ...newUser, display_name: e.target.value })}
                       required
@@ -368,24 +394,64 @@ export default function UserManagerPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="password">Password</Label>
-                    <Input id="password" type="password" placeholder="Enter password" />
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="Enter password"
+                      value={newUser.password}
+                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                      required
+                      minLength={8}
+                    />
+                    {newUser.password && (
+                      <div className="space-y-1">
+                        {(() => {
+                          const { valid, errors } = validatePassword(newUser.password);
+                          if (valid) {
+                            return (
+                              <p className="text-xs text-green-500 flex items-center gap-1">
+                                <Check className="w-3 h-3" /> Password meets requirements
+                              </p>
+                            );
+                          }
+                          return (
+                            <div className="text-xs text-muted-foreground">
+                              <p className="mb-1">Required:</p>
+                              <ul className="list-disc list-inside space-y-0.5">
+                                {errors.map((err, i) => (
+                                  <li key={i} className="text-destructive/80">{err}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="role">Role</Label>
                     <select
                       id="role"
+                      value={newUser.role}
+                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value as "admin" | "operator" | "viewer" })}
                       className="w-full h-10 px-3 rounded-md border border-border bg-input text-foreground"
                     >
-                      <option value="user">User</option>
-                      <option value="admin">Administrator</option>
+                      <option value="viewer">Viewer (Read-only)</option>
+                      <option value="operator">Operator (View + Control)</option>
+                      <option value="admin">Administrator (Full Access)</option>
                     </select>
+                    <p className="text-xs text-muted-foreground">
+                      {newUser.role === "admin" && "Full system access including user management"}
+                      {newUser.role === "operator" && "Can view and control services, but cannot modify settings"}
+                      {newUser.role === "viewer" && "Read-only access to dashboards and logs"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    size="sm" 
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => {
                       setShowCreateForm(false);
                       setNewUser({ username: "", display_name: "", password: "", role: "viewer" });
@@ -393,11 +459,11 @@ export default function UserManagerPage() {
                   >
                     Cancel
                   </Button>
-                  <Button 
-                    type="submit" 
-                    size="sm" 
+                  <Button
+                    type="submit"
+                    size="sm"
                     className="bg-accent hover:bg-accent/90"
-                    disabled={isCreating}
+                    disabled={isCreating || !validatePassword(newUser.password).valid || !newUser.username || !newUser.display_name}
                   >
                     {isCreating ? "Creating..." : "Create User"}
                   </Button>

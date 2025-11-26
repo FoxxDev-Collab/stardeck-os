@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { DesktopIcon } from "@/components/desktop-icon";
+import { ContainerAppIcon } from "@/components/container-app-icon";
 import {
   Activity,
   ListChecks,
@@ -19,7 +20,19 @@ import {
   Terminal,
   FileText,
   Network,
+  Box,
 } from "lucide-react";
+
+// Container app from API
+interface ContainerApp {
+  id: string;
+  container_id: string;
+  name: string;
+  icon: string;
+  status: string;
+  web_ui_port: number;
+  web_ui_path: string;
+}
 
 interface DesktopApp {
   id: string;
@@ -63,6 +76,14 @@ const desktopApps: DesktopApp[] = [
     href: "/network-manager",
     description: "Manage network interfaces, firewall, and routes",
     color: "text-blue-400",
+  },
+  {
+    id: "container-manager",
+    icon: <Box className="w-8 h-8" />,
+    label: "Container Manager",
+    href: "/container-manager",
+    description: "Manage Podman containers, images, and volumes",
+    color: "text-cyan-400",
   },
   {
     id: "rpm-manager",
@@ -143,11 +164,28 @@ const desktopApps: DesktopApp[] = [
 ];
 
 export default function DashboardPage() {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, user, token } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
   const [isCustomizing, setIsCustomizing] = useState(false);
   const [hiddenApps, setHiddenApps] = useState<Set<string>>(new Set());
+  const [containerApps, setContainerApps] = useState<ContainerApp[]>([]);
+
+  // Fetch container apps with web UIs
+  const fetchContainerApps = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/desktop-apps", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setContainerApps(data || []);
+      }
+    } catch {
+      // Ignore errors - container apps are optional
+    }
+  }, [token]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -164,6 +202,15 @@ export default function DashboardPage() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch container apps on load and periodically
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      fetchContainerApps();
+      const interval = setInterval(fetchContainerApps, 10000); // Refresh every 10s
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, token, fetchContainerApps]);
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -239,6 +286,7 @@ export default function DashboardPage() {
         {/* Desktop icons grid */}
         <div className="absolute inset-0 p-6">
           <div className="flex flex-wrap content-start gap-2">
+            {/* System Apps */}
             {visibleApps.map((app) => (
               <DesktopIcon
                 key={app.id}
@@ -247,6 +295,26 @@ export default function DashboardPage() {
                 href={app.href}
                 description={app.description}
                 color={app.color}
+              />
+            ))}
+
+            {/* Container Apps Separator */}
+            {containerApps.length > 0 && (
+              <div className="w-full my-4 flex items-center gap-4">
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+                <span className="text-xs text-cyan-500/70 font-medium tracking-wider">CONTAINER APPS</span>
+                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent" />
+              </div>
+            )}
+
+            {/* Container Apps */}
+            {containerApps.map((app) => (
+              <ContainerAppIcon
+                key={app.id}
+                containerId={app.container_id}
+                name={app.name}
+                icon={app.icon}
+                status={app.status}
               />
             ))}
           </div>

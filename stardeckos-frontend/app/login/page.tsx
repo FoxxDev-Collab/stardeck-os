@@ -6,14 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Lock, User, AlertCircle, Loader2 } from "lucide-react";
+import { Lock, User, Loader2 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth-context";
+import { toast } from "sonner";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login, isAuthenticated } = useAuth();
   const router = useRouter();
@@ -26,19 +26,25 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
       const success = await login(username, password);
 
       if (success) {
+        toast.success("Authentication successful", {
+          description: "Welcome aboard, Commander.",
+        });
         router.push("/dashboard");
       } else {
-        setError("Invalid username or password");
+        toast.error("Authentication failed", {
+          description: "Invalid username or password",
+        });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      toast.error("Connection error", {
+        description: err instanceof Error ? err.message : "Login failed",
+      });
     } finally {
       setLoading(false);
     }
@@ -114,14 +120,6 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Error message */}
-              {error && (
-                <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/30 rounded text-sm text-destructive">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-
               {/* Username field */}
               <div className="space-y-2">
                 <Label htmlFor="username" className="text-xs tracking-wider uppercase text-muted-foreground">

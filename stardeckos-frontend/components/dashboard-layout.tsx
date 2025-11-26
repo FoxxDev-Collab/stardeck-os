@@ -7,7 +7,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { StartMenu } from "@/components/start-menu";
 import { SystemActionsMenu } from "@/components/system-actions-menu";
 import { SystemTray } from "@/components/system-tray";
+import { SubtleStarfield } from "@/components/subtle-starfield";
 import { useSettings } from "@/lib/settings-context";
+import { useAuth } from "@/lib/auth-context";
 import { Menu, Home, Settings } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -22,8 +24,20 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children, title, time, actions, onCustomizeClick, showCustomize }: DashboardLayoutProps) {
   const [isStartMenuOpen, setIsStartMenuOpen] = useState(false);
   const { settings } = useSettings();
+  const { token } = useAuth();
 
   const isBottom = settings.taskbarPosition === "bottom";
+
+  // Helper to add auth token to API file URLs
+  const getAuthenticatedImageUrl = (url: string): string => {
+    if (!url || !token) return url;
+    // Only add token to our API file endpoints
+    if (url.startsWith("/api/files/")) {
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}token=${encodeURIComponent(token)}`;
+    }
+    return url;
+  };
 
   // Compute background style based on settings
   const getBackgroundStyle = (): React.CSSProperties => {
@@ -35,7 +49,7 @@ export function DashboardLayout({ children, title, time, actions, onCustomizeCli
       case "image":
         return settings.desktop.backgroundImage
           ? {
-              backgroundImage: `url(${settings.desktop.backgroundImage})`,
+              backgroundImage: `url(${getAuthenticatedImageUrl(settings.desktop.backgroundImage)})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundRepeat: "no-repeat",
@@ -110,7 +124,7 @@ export function DashboardLayout({ children, title, time, actions, onCustomizeCli
         {time && (
           <>
             <div className="h-4 w-px bg-border/50" />
-            <span className="text-xs font-mono text-accent px-2">{time}</span>
+            <span className="text-xs font-mono text-accent px-3 py-1 rounded bg-gray-800 dark:bg-transparent">{time}</span>
           </>
         )}
         <div className="h-6 w-px bg-border/50" />
@@ -128,17 +142,8 @@ export function DashboardLayout({ children, title, time, actions, onCustomizeCli
       className={`min-h-screen relative overflow-hidden flex flex-col ${isBottom ? "flex-col-reverse" : ""} ${!hasCustomBackground ? "bg-background" : ""}`}
       style={hasCustomBackground ? backgroundStyle : undefined}
     >
-      {/* Background grid - only show on default background */}
-      {!hasCustomBackground && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            backgroundImage:
-              "linear-gradient(to right, hsl(var(--border) / 0.1) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border) / 0.1) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
-          }}
-        />
-      )}
+      {/* Starfield background - only show on default background */}
+      {!hasCustomBackground && <SubtleStarfield />}
 
       {/* Glow effects */}
       <div

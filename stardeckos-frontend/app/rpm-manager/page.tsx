@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,18 +9,32 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { 
-  Package, 
-  Download, 
+import {
+  Package,
+  Download,
   CheckCircle2,
-  AlertTriangle,
   RefreshCw,
   Search,
   Plus,
   Trash2,
   Edit,
   Server,
-  AlertCircle
+  AlertCircle,
+  X,
+  Clock,
+  Shield,
+  ArrowRight,
+  Check,
+  Loader2,
+  XCircle,
+  History,
+  Info,
+  ExternalLink,
+  FileText,
+  HardDrive,
+  Scale,
+  Globe,
+  Box,
 } from "lucide-react";
 
 interface Update {
@@ -57,25 +71,46 @@ interface PackageSearchResult {
   repository?: string;
   summary: string;
   description?: string;
+  size?: number;
+  install_size?: number;
+  license?: string;
+  url?: string;
 }
+
+interface PackageDetails extends PackageSearchResult {
+  installed?: boolean;
+}
+
+interface OperationMessage {
+  type: string;
+  message: string;
+  phase?: string;
+  progress?: number;
+  package?: string;
+  total_pkgs?: number;
+  current_pkg?: number;
+  packages?: string[];
+  success?: boolean;
+}
+
+type OperationType = "update" | "install" | "remove" | "refresh" | null;
 
 export default function RPMManagerPage() {
   const { isAuthenticated, isLoading, token } = useAuth();
   const router = useRouter();
   const [time, setTime] = useState<string>("");
-  
+
   // Updates tab state
   const [updates, setUpdates] = useState<Update[]>([]);
   const [history, setHistory] = useState<UpdateHistory[]>([]);
   const [selectedUpdates, setSelectedUpdates] = useState<Set<string>>(new Set());
-  const [isUpdating, setIsUpdating] = useState(false);
-  
+
   // Packages tab state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<PackageSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set());
-  
+
   // Repositories tab state
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [isEditingRepo, setIsEditingRepo] = useState(false);
@@ -87,9 +122,26 @@ export default function RPMManagerPage() {
     enabled: true,
     gpgcheck: true,
   });
-  
+
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("updates");
+
+  // Operation modal state
+  const [showOperationModal, setShowOperationModal] = useState(false);
+  const [operationType, setOperationType] = useState<OperationType>(null);
+  const [operationPhase, setOperationPhase] = useState("");
+  const [operationProgress, setOperationProgress] = useState(0);
+  const [operationOutput, setOperationOutput] = useState<string[]>([]);
+  const [operationComplete, setOperationComplete] = useState(false);
+  const [operationSuccess, setOperationSuccess] = useState(false);
+  const [operationMessage, setOperationMessage] = useState("");
+  const outputRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Package details modal state
+  const [showPackageDetails, setShowPackageDetails] = useState(false);
+  const [selectedPackage, setSelectedPackage] = useState<PackageDetails | null>(null);
+  const [isLoadingPackageDetails, setIsLoadingPackageDetails] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -100,12 +152,7 @@ export default function RPMManagerPage() {
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      setTime(
-        now.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      );
+      setTime(now.toLocaleTimeString("en-US", { hour12: false }));
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
@@ -123,6 +170,102 @@ export default function RPMManagerPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, token, activeTab]);
+
+  // Auto-scroll output
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [operationOutput]);
+
+  // ===== WebSocket Operation =====
+  const startOperation = (operation: OperationType, packages: string[] = []) => {
+    if (!token || !operation) return;
+
+    setShowOperationModal(true);
+    setOperationType(operation);
+    setOperationPhase("starting");
+    setOperationProgress(0);
+    setOperationOutput([]);
+    setOperationComplete(false);
+    setOperationSuccess(false);
+    setOperationMessage("");
+
+    // Connect to WebSocket
+    const isDevMode = typeof window !== "undefined" && window.location.port === "3000";
+    const wsProtocol = isDevMode ? "ws:" : window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsHost = isDevMode ? `${window.location.hostname}:8080` : window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/api/packages/ws?token=${encodeURIComponent(token)}`;
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      // Send the operation request
+      ws.send(JSON.stringify({
+        operation,
+        packages,
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg: OperationMessage = JSON.parse(event.data);
+
+        if (msg.phase) {
+          setOperationPhase(msg.phase);
+        }
+        if (msg.progress !== undefined) {
+          setOperationProgress(msg.progress);
+        }
+
+        if (msg.type === "output" || msg.type === "status") {
+          setOperationOutput((prev) => [...prev, msg.message]);
+        } else if (msg.type === "complete") {
+          setOperationComplete(true);
+          setOperationSuccess(msg.success || false);
+          setOperationMessage(msg.message);
+          setOperationProgress(100);
+        } else if (msg.type === "error") {
+          setOperationOutput((prev) => [...prev, `ERROR: ${msg.message}`]);
+          setOperationComplete(true);
+          setOperationSuccess(false);
+          setOperationMessage(msg.message);
+        }
+      } catch (e) {
+        console.error("Failed to parse WebSocket message:", e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error("WebSocket error:", error);
+      setOperationOutput((prev) => [...prev, "WebSocket connection error"]);
+      setOperationComplete(true);
+      setOperationSuccess(false);
+      setOperationMessage("Connection error");
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+  };
+
+  const closeOperationModal = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    setShowOperationModal(false);
+    setOperationType(null);
+    setOperationOutput([]);
+
+    // Refresh data after operation
+    if (operationComplete && operationSuccess) {
+      fetchUpdates();
+      fetchHistory();
+      setSelectedUpdates(new Set());
+      setSelectedPackages(new Set());
+    }
+  };
 
   // ===== Updates Tab Functions =====
   const fetchUpdates = useCallback(async () => {
@@ -158,38 +301,9 @@ export default function RPMManagerPage() {
     }
   }, [token]);
 
-  const applyUpdates = async () => {
-    if (!token) return;
-    setIsUpdating(true);
-    setError(null);
-
-    try {
-      const packagesToUpdate = selectedUpdates.size > 0 
-        ? Array.from(selectedUpdates)
-        : [];
-
-      const response = await fetch("/api/updates/apply", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ packages: packagesToUpdate }),
-      });
-
-      if (!response.ok) throw new Error("Failed to apply updates");
-      
-      const result = await response.json();
-      alert(result.message || "Updates applied successfully");
-      setSelectedUpdates(new Set());
-      fetchUpdates();
-      fetchHistory();
-    } catch (err) {
-      setError("Failed to apply updates");
-      console.error(err);
-    } finally {
-      setIsUpdating(false);
-    }
+  const applyUpdates = () => {
+    const packages = selectedUpdates.size > 0 ? Array.from(selectedUpdates) : [];
+    startOperation("update", packages);
   };
 
   const toggleUpdateSelection = (name: string) => {
@@ -202,10 +316,18 @@ export default function RPMManagerPage() {
     setSelectedUpdates(newSelection);
   };
 
+  const selectAllUpdates = () => {
+    if (selectedUpdates.size === updates.length) {
+      setSelectedUpdates(new Set());
+    } else {
+      setSelectedUpdates(new Set(updates.map((u) => u.name)));
+    }
+  };
+
   // ===== Packages Tab Functions =====
   const searchPackages = async () => {
     if (!token || !searchQuery.trim()) return;
-    
+
     setIsSearching(true);
     setError(null);
 
@@ -225,35 +347,9 @@ export default function RPMManagerPage() {
     }
   };
 
-  const installPackages = async () => {
-    if (!token || selectedPackages.size === 0) return;
-
-    setIsSearching(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/packages/install", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ packages: Array.from(selectedPackages) }),
-      });
-
-      if (!response.ok) throw new Error("Failed to install packages");
-      
-      const result = await response.json();
-      alert(result.message || "Packages installed successfully");
-      setSelectedPackages(new Set());
-      setSearchResults([]);
-      setSearchQuery("");
-    } catch (err) {
-      setError("Failed to install packages");
-      console.error(err);
-    } finally {
-      setIsSearching(false);
-    }
+  const installPackages = () => {
+    if (selectedPackages.size === 0) return;
+    startOperation("install", Array.from(selectedPackages));
   };
 
   const togglePackageSelection = (name: string) => {
@@ -266,28 +362,48 @@ export default function RPMManagerPage() {
     setSelectedPackages(newSelection);
   };
 
-  const refreshMetadata = async () => {
+  const refreshMetadata = () => {
+    startOperation("refresh");
+  };
+
+  // ===== Package Details =====
+  const fetchPackageDetails = async (packageName: string) => {
     if (!token) return;
 
-    setIsSearching(true);
-    setError(null);
+    setIsLoadingPackageDetails(true);
+    setShowPackageDetails(true);
+    setSelectedPackage(null);
 
     try {
-      const response = await fetch("/api/metadata/refresh", {
-        method: "POST",
+      const response = await fetch(`/api/packages/${encodeURIComponent(packageName)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (!response.ok) throw new Error("Failed to refresh metadata");
-      
-      alert("Repository metadata refreshed successfully");
-      fetchUpdates();
+      if (!response.ok) throw new Error("Failed to fetch package details");
+      const data = await response.json();
+      setSelectedPackage(data);
     } catch (err) {
-      setError("Failed to refresh metadata");
       console.error(err);
+      setSelectedPackage({
+        name: packageName,
+        arch: "",
+        summary: "Failed to load package details",
+      });
     } finally {
-      setIsSearching(false);
+      setIsLoadingPackageDetails(false);
     }
+  };
+
+  const formatBytes = (bytes: number | undefined): string => {
+    if (!bytes || bytes === 0) return "N/A";
+    const units = ["B", "KB", "MB", "GB"];
+    let unitIndex = 0;
+    let size = bytes;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
   };
 
   // ===== Repositories Tab Functions =====
@@ -314,10 +430,10 @@ export default function RPMManagerPage() {
     setError(null);
 
     try {
-      const url = editingRepoId 
+      const url = editingRepoId
         ? `/api/repositories/${editingRepoId}`
         : "/api/repositories";
-      
+
       const response = await fetch(url, {
         method: editingRepoId ? "PUT" : "POST",
         headers: {
@@ -328,8 +444,7 @@ export default function RPMManagerPage() {
       });
 
       if (!response.ok) throw new Error("Failed to save repository");
-      
-      alert(`Repository ${editingRepoId ? "updated" : "created"} successfully`);
+
       setIsEditingRepo(false);
       setEditingRepoId(null);
       setRepoForm({
@@ -356,8 +471,6 @@ export default function RPMManagerPage() {
       });
 
       if (!response.ok) throw new Error("Failed to delete repository");
-      
-      alert("Repository deleted successfully");
       fetchRepositories();
     } catch (err) {
       setError("Failed to delete repository");
@@ -375,7 +488,7 @@ export default function RPMManagerPage() {
     return (
       <DashboardLayout title="RPM Manager" time={time}>
         <div className="flex items-center justify-center h-64">
-          <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+          <RefreshCw className="w-8 h-8 animate-spin text-accent" />
         </div>
       </DashboardLayout>
     );
@@ -385,8 +498,60 @@ export default function RPMManagerPage() {
     return null;
   }
 
-  const securityUpdates = updates.filter(u => u.security_update).length;
+  const securityUpdates = updates.filter((u) => u.security_update).length;
   const totalUpdates = updates.length;
+
+  const getPhaseLabel = (phase: string) => {
+    switch (phase) {
+      case "starting":
+        return "Starting...";
+      case "checking":
+        return "Checking dependencies...";
+      case "downloading":
+        return "Downloading packages...";
+      case "installing":
+        return "Installing packages...";
+      case "verifying":
+        return "Verifying...";
+      case "complete":
+        return "Complete";
+      case "cleaning":
+        return "Cleaning metadata...";
+      case "caching":
+        return "Building cache...";
+      case "error":
+        return "Error";
+      default:
+        return phase;
+    }
+  };
+
+  const getPhaseIcon = (phase: string) => {
+    switch (phase) {
+      case "starting":
+      case "checking":
+        return <Loader2 className="w-5 h-5 animate-spin" />;
+      case "downloading":
+        return <Download className="w-5 h-5 animate-pulse" />;
+      case "installing":
+        return <Package className="w-5 h-5 animate-pulse" />;
+      case "verifying":
+        return <Shield className="w-5 h-5 animate-pulse" />;
+      case "complete":
+        return operationSuccess ? (
+          <CheckCircle2 className="w-5 h-5 text-green-500" />
+        ) : (
+          <XCircle className="w-5 h-5 text-destructive" />
+        );
+      case "cleaning":
+      case "caching":
+        return <RefreshCw className="w-5 h-5 animate-spin" />;
+      case "error":
+        return <XCircle className="w-5 h-5 text-destructive" />;
+      default:
+        return <Loader2 className="w-5 h-5 animate-spin" />;
+    }
+  };
 
   return (
     <DashboardLayout title="RPM MANAGER" time={time}>
@@ -396,21 +561,34 @@ export default function RPMManagerPage() {
           <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive text-sm flex items-center gap-2">
             <AlertCircle className="w-4 h-4" />
             {error}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 w-6 p-0"
+              onClick={() => setError(null)}
+            >
+              <X className="w-4 h-4" />
+            </Button>
           </div>
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="updates">
-              <Download className="w-4 h-4 mr-2" />
+            <TabsTrigger value="updates" className="gap-2">
+              <Download className="w-4 h-4" />
               Updates
+              {totalUpdates > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs bg-accent/20 text-accent rounded-full">
+                  {totalUpdates}
+                </span>
+              )}
             </TabsTrigger>
-            <TabsTrigger value="packages">
-              <Package className="w-4 h-4 mr-2" />
+            <TabsTrigger value="packages" className="gap-2">
+              <Package className="w-4 h-4" />
               Packages
             </TabsTrigger>
-            <TabsTrigger value="repositories">
-              <Server className="w-4 h-4 mr-2" />
+            <TabsTrigger value="repositories" className="gap-2">
+              <Server className="w-4 h-4" />
               Repositories
             </TabsTrigger>
           </TabsList>
@@ -418,117 +596,164 @@ export default function RPMManagerPage() {
           {/* Updates Tab */}
           <TabsContent value="updates" className="space-y-6">
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Available Updates
-                  </CardTitle>
-                  <Package className="w-4 h-4 text-accent" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{totalUpdates}</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {securityUpdates} security
-                  </p>
+                <CardContent className="pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <Package className="w-4 h-4 text-accent" />
+                    <span className="text-2xl font-bold">{totalUpdates}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Available Updates</p>
                 </CardContent>
               </Card>
 
               <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Security Updates
-                  </CardTitle>
-                  <AlertTriangle className="w-4 h-4 text-accent" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{securityUpdates}</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Critical patches
-                  </p>
+                <CardContent className="pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <Shield className="w-4 h-4 text-orange-500" />
+                    <span className="text-2xl font-bold text-orange-500">{securityUpdates}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Security Patches</p>
                 </CardContent>
               </Card>
 
               <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Selected
-                  </CardTitle>
-                  <CheckCircle2 className="w-4 h-4 text-accent" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{selectedUpdates.size}</div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Ready to install
-                  </p>
+                <CardContent className="pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <Check className="w-4 h-4 text-primary" />
+                    <span className="text-2xl font-bold">{selectedUpdates.size}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Selected</p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardContent className="pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <History className="w-4 h-4 text-chart-4" />
+                    <span className="text-2xl font-bold">{history.length}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Transactions</p>
                 </CardContent>
               </Card>
             </div>
 
-            <div className="flex gap-2">
-              <Button 
-                onClick={applyUpdates} 
-                disabled={isUpdating || totalUpdates === 0}
-                className="flex items-center gap-2"
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={applyUpdates}
+                disabled={totalUpdates === 0}
+                className="gap-2"
               >
                 <Download className="w-4 h-4" />
-                {selectedUpdates.size > 0 
-                  ? `Apply Selected (${selectedUpdates.size})` 
-                  : "Apply All Updates"
-                }
+                {selectedUpdates.size > 0
+                  ? `Update Selected (${selectedUpdates.size})`
+                  : "Update All"}
               </Button>
-              <Button 
-                onClick={refreshMetadata} 
-                variant="outline"
-                disabled={isUpdating}
-                className="flex items-center gap-2"
-              >
+              <Button onClick={refreshMetadata} variant="outline" className="gap-2">
                 <RefreshCw className="w-4 h-4" />
                 Refresh Metadata
               </Button>
+              {updates.length > 0 && (
+                <Button onClick={selectAllUpdates} variant="ghost" className="gap-2">
+                  <Check className="w-4 h-4" />
+                  {selectedUpdates.size === updates.length ? "Deselect All" : "Select All"}
+                </Button>
+              )}
             </div>
 
+            {/* Available Updates */}
             <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle>Available Updates</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Package className="w-5 h-5 text-accent" />
+                  Available Updates
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {totalUpdates === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-green-400" />
-                    <p>System is up to date</p>
+                  <div className="text-center py-12 text-muted-foreground">
+                    <CheckCircle2 className="w-16 h-16 mx-auto mb-4 text-green-500/50" />
+                    <p className="text-lg font-medium">System is up to date</p>
+                    <p className="text-sm mt-1">No updates available</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
                     {updates.map((update) => (
                       <div
                         key={update.name}
-                        className="flex items-center justify-between p-3 border border-border/40 rounded-lg hover:bg-accent/50 transition-colors cursor-pointer"
-                        onClick={() => toggleUpdateSelection(update.name)}
+                        className={`p-4 border rounded-lg transition-all ${
+                          selectedUpdates.has(update.name)
+                            ? "border-accent bg-accent/10"
+                            : "border-border/40 hover:border-accent/50"
+                        }`}
                       >
-                        <div className="flex items-center gap-3 flex-1">
+                        <div className="flex items-start gap-3">
                           <input
                             type="checkbox"
                             checked={selectedUpdates.has(update.name)}
-                            onChange={() => {}}
-                            className="w-4 h-4"
+                            onChange={() => toggleUpdateSelection(update.name)}
+                            className="w-4 h-4 accent-accent mt-1 cursor-pointer"
                           />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">{update.name}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className="font-medium hover:text-accent cursor-pointer"
+                                onClick={() => fetchPackageDetails(update.name)}
+                              >
+                                {update.name}
+                              </span>
                               {update.security_update && (
-                                <span className="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded">
+                                <span className="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <Shield className="w-3 h-3" />
                                   SECURITY
                                 </span>
                               )}
                             </div>
-                            <div className="text-sm text-muted-foreground">
-                              {update.current_version} → {update.new_version}
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className="font-mono text-xs bg-muted px-2 py-1 rounded">{update.current_version}</span>
+                              <ArrowRight className="w-3 h-3 text-accent" />
+                              <span className="font-mono text-xs bg-accent/20 text-accent px-2 py-1 rounded">{update.new_version}</span>
+                            </div>
+                            <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Server className="w-3 h-3" />
+                                {update.repository}
+                              </span>
+                              {update.size && (
+                                <span className="flex items-center gap-1">
+                                  <HardDrive className="w-3 h-3" />
+                                  {update.size}
+                                </span>
+                              )}
                             </div>
                           </div>
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {update.repository}
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                fetchPackageDetails(update.name);
+                              }}
+                              className="h-8 w-8 p-0"
+                              title="View details"
+                            >
+                              <Info className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startOperation("update", [update.name]);
+                              }}
+                              className="h-8 w-8 p-0 text-accent hover:text-accent"
+                              title="Update this package"
+                            >
+                              <Download className="w-4 h-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -537,28 +762,38 @@ export default function RPMManagerPage() {
               </CardContent>
             </Card>
 
+            {/* Update History */}
             <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle>Update History</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-accent" />
+                  Update History
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {history.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-4">No update history</p>
+                  <p className="text-center text-muted-foreground py-8">No update history</p>
                 ) : (
-                  <div className="space-y-2">
-                    {history.slice(0, 10).map((entry) => (
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {history.slice(0, 20).map((entry) => (
                       <div
                         key={entry.id}
                         className="flex items-center justify-between p-3 border border-border/40 rounded-lg"
                       >
-                        <div>
-                          <div className="font-medium">{entry.action}</div>
-                          <div className="text-sm text-muted-foreground">
-                            {new Date(entry.date).toLocaleString()}
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                            <Clock className="w-4 h-4 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <div className="font-medium">{entry.action}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(entry.date).toLocaleString()}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          {entry.package_count} packages
+                        <div className="text-sm">
+                          <span className="font-mono">{entry.package_count}</span>
+                          <span className="text-muted-foreground ml-1">packages</span>
                         </div>
                       </div>
                     ))}
@@ -571,75 +806,132 @@ export default function RPMManagerPage() {
           {/* Packages Tab */}
           <TabsContent value="packages" className="space-y-6">
             <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle>Search Packages</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Search className="w-5 h-5 text-accent" />
+                  Search Packages
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex gap-2">
-                  <Input
-                    placeholder="Search for packages..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && searchPackages()}
-                    className="flex-1"
-                  />
-                  <Button 
-                    onClick={searchPackages} 
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search for packages (e.g., nginx, vim, docker)..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && searchPackages()}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Button
+                    onClick={searchPackages}
                     disabled={isSearching || !searchQuery.trim()}
+                    className="gap-2"
                   >
-                    <Search className="w-4 h-4 mr-2" />
+                    {isSearching ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Search className="w-4 h-4" />
+                    )}
                     Search
                   </Button>
                 </div>
 
                 {selectedPackages.size > 0 && (
-                  <Button 
-                    onClick={installPackages} 
-                    disabled={isSearching}
-                    className="w-full"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
+                  <Button onClick={installPackages} className="w-full gap-2">
+                    <Download className="w-4 h-4" />
                     Install Selected ({selectedPackages.size})
                   </Button>
                 )}
 
                 {searchResults.length > 0 && (
-                  <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                  <div className="space-y-3 max-h-[500px] overflow-y-auto">
                     {searchResults.map((pkg) => (
                       <div
                         key={`${pkg.name}-${pkg.arch}`}
-                        className="flex items-center justify-between p-3 border border-border/40 rounded-lg hover:bg-accent/50 transition-colors cursor-pointer"
-                        onClick={() => togglePackageSelection(pkg.name)}
+                        className={`p-4 border rounded-lg transition-all ${
+                          selectedPackages.has(pkg.name)
+                            ? "border-accent bg-accent/10"
+                            : "border-border/40 hover:border-accent/50"
+                        }`}
                       >
-                        <div className="flex items-center gap-3 flex-1">
+                        <div className="flex items-start gap-3">
                           <input
                             type="checkbox"
                             checked={selectedPackages.has(pkg.name)}
-                            onChange={() => {}}
-                            className="w-4 h-4"
+                            onChange={() => togglePackageSelection(pkg.name)}
+                            className="w-4 h-4 accent-accent mt-1 cursor-pointer"
                           />
-                          <div className="flex-1">
-                            <div className="font-medium">
-                              {pkg.name}
-                              {pkg.arch && <span className="text-muted-foreground ml-2">({pkg.arch})</span>}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className="font-medium hover:text-accent cursor-pointer"
+                                onClick={() => fetchPackageDetails(pkg.name)}
+                              >
+                                {pkg.name}
+                              </span>
+                              {pkg.arch && (
+                                <span className="text-xs bg-muted px-1.5 py-0.5 rounded">{pkg.arch}</span>
+                              )}
+                              {pkg.version && (
+                                <span className="text-xs font-mono text-muted-foreground">{pkg.version}</span>
+                              )}
                             </div>
-                            <div className="text-sm text-muted-foreground">{pkg.summary}</div>
+                            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{pkg.summary}</p>
+                            {pkg.repository && (
+                              <div className="flex items-center gap-4 mt-2">
+                                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                  <Server className="w-3 h-3" />
+                                  {pkg.repository}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                fetchPackageDetails(pkg.name);
+                              }}
+                              className="h-8 w-8 p-0"
+                              title="View details"
+                            >
+                              <Info className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startOperation("install", [pkg.name]);
+                              }}
+                              className="h-8 w-8 p-0 text-green-500 hover:text-green-400"
+                              title="Install package"
+                            >
+                              <Download className="w-4 h-4" />
+                            </Button>
                           </div>
                         </div>
-                        {pkg.repository && (
-                          <div className="text-sm text-muted-foreground">
-                            {pkg.repository}
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
                 )}
 
                 {searchResults.length === 0 && searchQuery && !isSearching && (
-                  <p className="text-center text-muted-foreground py-8">
-                    No packages found
-                  </p>
+                  <div className="text-center text-muted-foreground py-12">
+                    <Package className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p>No packages found matching &quot;{searchQuery}&quot;</p>
+                  </div>
+                )}
+
+                {!searchQuery && (
+                  <div className="text-center text-muted-foreground py-12">
+                    <Search className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p>Enter a package name to search</p>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -648,7 +940,7 @@ export default function RPMManagerPage() {
           {/* Repositories Tab */}
           <TabsContent value="repositories" className="space-y-6">
             <div className="flex gap-2">
-              <Button 
+              <Button
                 onClick={() => {
                   setIsEditingRepo(true);
                   setEditingRepoId(null);
@@ -660,85 +952,91 @@ export default function RPMManagerPage() {
                     gpgcheck: true,
                   });
                 }}
+                className="gap-2"
               >
-                <Plus className="w-4 h-4 mr-2" />
+                <Plus className="w-4 h-4" />
                 Add Repository
               </Button>
             </div>
 
             {isEditingRepo && (
-              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-                <CardHeader>
+              <Card className="border-accent/50 bg-card/70 backdrop-blur-sm">
+                <CardHeader className="pb-3">
                   <CardTitle>
                     {editingRepoId ? "Edit Repository" : "Add Repository"}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div>
-                    <Label>Repository ID</Label>
-                    <Input
-                      value={repoForm.id}
-                      onChange={(e) => setRepoForm({ ...repoForm, id: e.target.value })}
-                      placeholder="my-repo"
-                      disabled={!!editingRepoId}
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Repository ID</Label>
+                      <Input
+                        value={repoForm.id}
+                        onChange={(e) => setRepoForm({ ...repoForm, id: e.target.value })}
+                        placeholder="my-repo"
+                        disabled={!!editingRepoId}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Name</Label>
+                      <Input
+                        value={repoForm.name}
+                        onChange={(e) => setRepoForm({ ...repoForm, name: e.target.value })}
+                        placeholder="My Repository"
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Base URL</Label>
+                      <Input
+                        value={repoForm.baseurl || ""}
+                        onChange={(e) => setRepoForm({ ...repoForm, baseurl: e.target.value })}
+                        placeholder="https://example.com/repo/$releasever/$basearch"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Mirror List (optional)</Label>
+                      <Input
+                        value={repoForm.mirrorlist || ""}
+                        onChange={(e) => setRepoForm({ ...repoForm, mirrorlist: e.target.value })}
+                        placeholder="https://example.com/mirrorlist"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>GPG Key (optional)</Label>
+                      <Input
+                        value={repoForm.gpgkey || ""}
+                        onChange={(e) => setRepoForm({ ...repoForm, gpgkey: e.target.value })}
+                        placeholder="https://example.com/RPM-GPG-KEY"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label>Name</Label>
-                    <Input
-                      value={repoForm.name}
-                      onChange={(e) => setRepoForm({ ...repoForm, name: e.target.value })}
-                      placeholder="My Repository"
-                    />
-                  </div>
-                  <div>
-                    <Label>Base URL</Label>
-                    <Input
-                      value={repoForm.baseurl || ""}
-                      onChange={(e) => setRepoForm({ ...repoForm, baseurl: e.target.value })}
-                      placeholder="https://example.com/repo"
-                    />
-                  </div>
-                  <div>
-                    <Label>Mirror List (optional)</Label>
-                    <Input
-                      value={repoForm.mirrorlist || ""}
-                      onChange={(e) => setRepoForm({ ...repoForm, mirrorlist: e.target.value })}
-                      placeholder="https://example.com/mirrorlist"
-                    />
-                  </div>
-                  <div>
-                    <Label>GPG Key (optional)</Label>
-                    <Input
-                      value={repoForm.gpgkey || ""}
-                      onChange={(e) => setRepoForm({ ...repoForm, gpgkey: e.target.value })}
-                      placeholder="https://example.com/RPM-GPG-KEY"
-                    />
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2">
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={repoForm.enabled}
                         onChange={(e) => setRepoForm({ ...repoForm, enabled: e.target.checked })}
+                        className="w-4 h-4 accent-accent"
                       />
-                      Enabled
+                      <span>Enabled</span>
                     </label>
-                    <label className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={repoForm.gpgcheck}
                         onChange={(e) => setRepoForm({ ...repoForm, gpgcheck: e.target.checked })}
+                        className="w-4 h-4 accent-accent"
                       />
-                      GPG Check
+                      <span>GPG Check</span>
                     </label>
                   </div>
                   <div className="flex gap-2">
-                    <Button onClick={saveRepository}>
+                    <Button onClick={saveRepository} className="gap-2">
+                      <Check className="w-4 h-4" />
                       Save Repository
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       onClick={() => {
                         setIsEditingRepo(false);
                         setEditingRepoId(null);
@@ -752,40 +1050,48 @@ export default function RPMManagerPage() {
             )}
 
             <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle>Configured Repositories</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Server className="w-5 h-5 text-accent" />
+                  Configured Repositories
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {repositories.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    No repositories configured
-                  </p>
+                  <div className="text-center text-muted-foreground py-12">
+                    <Server className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p>No repositories configured</p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {repositories.map((repo) => (
                       <div
                         key={repo.id}
-                        className="flex items-center justify-between p-3 border border-border/40 rounded-lg"
+                        className="flex items-center justify-between p-4 border border-border/40 rounded-lg"
                       >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{repo.name}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">{repo.name || repo.id}</span>
                             {repo.enabled ? (
                               <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded">
                                 ENABLED
                               </span>
                             ) : (
-                              <span className="text-xs bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded">
+                              <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
                                 DISABLED
                               </span>
                             )}
+                            {repo.gpgcheck && (
+                              <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded flex items-center gap-1">
+                                <Shield className="w-3 h-3" />
+                                GPG
+                              </span>
+                            )}
                           </div>
-                          <div className="text-sm text-muted-foreground">
-                            {repo.id}
-                          </div>
-                          {repo.baseurl && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {repo.baseurl}
+                          <div className="text-sm text-muted-foreground mt-1">{repo.id}</div>
+                          {(repo.baseurl || repo.mirrorlist || repo.metalink) && (
+                            <div className="text-xs text-muted-foreground mt-1 truncate max-w-md">
+                              {repo.baseurl || repo.mirrorlist || repo.metalink}
                             </div>
                           )}
                         </div>
@@ -800,6 +1106,7 @@ export default function RPMManagerPage() {
                           <Button
                             size="sm"
                             variant="outline"
+                            className="text-destructive hover:text-destructive"
                             onClick={() => deleteRepository(repo.id)}
                           >
                             <Trash2 className="w-4 h-4" />
@@ -814,6 +1121,252 @@ export default function RPMManagerPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Operation Modal */}
+      {showOperationModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center gap-3">
+                {getPhaseIcon(operationPhase)}
+                <div>
+                  <h3 className="font-semibold">
+                    {operationType === "update" && "Updating Packages"}
+                    {operationType === "install" && "Installing Packages"}
+                    {operationType === "remove" && "Removing Packages"}
+                    {operationType === "refresh" && "Refreshing Metadata"}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">{getPhaseLabel(operationPhase)}</p>
+                </div>
+              </div>
+              {operationComplete && (
+                <Button variant="ghost" size="sm" onClick={closeOperationModal}>
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+
+            {/* Progress Bar */}
+            <div className="px-4 py-3 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-muted-foreground">Progress</span>
+                <span className="text-sm font-mono">{operationProgress}%</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    operationComplete
+                      ? operationSuccess
+                        ? "bg-green-500"
+                        : "bg-destructive"
+                      : "bg-accent"
+                  }`}
+                  style={{ width: `${operationProgress}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Output Console */}
+            <div
+              ref={outputRef}
+              className="flex-1 overflow-y-auto p-4 font-mono text-xs bg-black/30 min-h-[200px] max-h-[400px]"
+            >
+              {operationOutput.map((line, i) => (
+                <div
+                  key={i}
+                  className={`py-0.5 ${
+                    line.includes("ERROR") || line.includes("error")
+                      ? "text-destructive"
+                      : line.includes("Complete!") || line.includes("successfully")
+                      ? "text-green-500"
+                      : line.includes("Downloading") || line.includes("Installing")
+                      ? "text-accent"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {line}
+                </div>
+              ))}
+              {!operationComplete && (
+                <div className="py-0.5 text-muted-foreground animate-pulse">▌</div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {operationComplete && (
+              <div className="p-4 border-t border-border">
+                <div
+                  className={`flex items-center gap-2 mb-3 ${
+                    operationSuccess ? "text-green-500" : "text-destructive"
+                  }`}
+                >
+                  {operationSuccess ? (
+                    <CheckCircle2 className="w-5 h-5" />
+                  ) : (
+                    <XCircle className="w-5 h-5" />
+                  )}
+                  <span className="font-medium">{operationMessage}</span>
+                </div>
+                <Button onClick={closeOperationModal} className="w-full">
+                  Close
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Package Details Modal */}
+      {showPackageDetails && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-lg w-full max-w-lg">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center">
+                  <Package className="w-5 h-5 text-accent" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">
+                    {isLoadingPackageDetails ? "Loading..." : selectedPackage?.name || "Package Details"}
+                  </h3>
+                  {selectedPackage?.arch && (
+                    <p className="text-sm text-muted-foreground">{selectedPackage.arch}</p>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowPackageDetails(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
+              {isLoadingPackageDetails ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-accent" />
+                </div>
+              ) : selectedPackage ? (
+                <>
+                  {/* Summary */}
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Summary</p>
+                    <p className="text-sm">{selectedPackage.summary || "No summary available"}</p>
+                  </div>
+
+                  {/* Description */}
+                  {selectedPackage.description && (
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-1">Description</p>
+                      <p className="text-sm whitespace-pre-wrap">{selectedPackage.description}</p>
+                    </div>
+                  )}
+
+                  {/* Details Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedPackage.version && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Box className="w-4 h-4 text-accent" />
+                          <span className="text-xs text-muted-foreground">Version</span>
+                        </div>
+                        <p className="text-sm font-mono">{selectedPackage.version}</p>
+                      </div>
+                    )}
+
+                    {selectedPackage.repository && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Server className="w-4 h-4 text-chart-4" />
+                          <span className="text-xs text-muted-foreground">Repository</span>
+                        </div>
+                        <p className="text-sm">{selectedPackage.repository}</p>
+                      </div>
+                    )}
+
+                    {(selectedPackage.size !== undefined && selectedPackage.size > 0) && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <HardDrive className="w-4 h-4 text-chart-2" />
+                          <span className="text-xs text-muted-foreground">Download Size</span>
+                        </div>
+                        <p className="text-sm font-mono">{formatBytes(selectedPackage.size)}</p>
+                      </div>
+                    )}
+
+                    {(selectedPackage.install_size !== undefined && selectedPackage.install_size > 0) && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <FileText className="w-4 h-4 text-chart-3" />
+                          <span className="text-xs text-muted-foreground">Installed Size</span>
+                        </div>
+                        <p className="text-sm font-mono">{formatBytes(selectedPackage.install_size)}</p>
+                      </div>
+                    )}
+
+                    {selectedPackage.license && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Scale className="w-4 h-4 text-chart-5" />
+                          <span className="text-xs text-muted-foreground">License</span>
+                        </div>
+                        <p className="text-sm">{selectedPackage.license}</p>
+                      </div>
+                    )}
+
+                    {selectedPackage.url && (
+                      <div className="p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Globe className="w-4 h-4 text-primary" />
+                          <span className="text-xs text-muted-foreground">Website</span>
+                        </div>
+                        <a
+                          href={selectedPackage.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-primary hover:underline flex items-center gap-1"
+                        >
+                          Visit <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="text-center text-muted-foreground py-8">No package selected</p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-border flex gap-2">
+              {selectedPackage && !isLoadingPackageDetails && (
+                <Button
+                  onClick={() => {
+                    setShowPackageDetails(false);
+                    startOperation("install", [selectedPackage.name]);
+                  }}
+                  className="flex-1 gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Install Package
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => setShowPackageDetails(false)}
+                className={selectedPackage && !isLoadingPackageDetails ? "" : "w-full"}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

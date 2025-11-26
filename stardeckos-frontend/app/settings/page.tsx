@@ -79,10 +79,15 @@ export default function SettingsPage() {
     getActiveCustomTheme,
   } = useSettings();
 
+  // Get the correct home directory path for a user
+  const getUserHomePath = (username: string) => {
+    return username === "root" ? "/root" : `/home/${username}`;
+  };
+
   const fetchUploadedBackgrounds = async () => {
     if (!token || !user) return;
     try {
-      const backgroundsPath = `/home/${user.username}/backgrounds`;
+      const backgroundsPath = `${getUserHomePath(user.username)}/backgrounds`;
       const response = await fetch(`/api/files?path=${encodeURIComponent(backgroundsPath)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -92,7 +97,9 @@ export default function SettingsPage() {
           .filter((f: { name: string; is_dir: boolean }) =>
             !f.is_dir && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f.name)
           )
-          .map((f: { name: string }) => `/api/files/download?path=${backgroundsPath}/${f.name}`);
+          .map((f: { name: string }) =>
+            `/api/files/download?path=${encodeURIComponent(`${backgroundsPath}/${f.name}`)}&token=${encodeURIComponent(token)}`
+          );
         setUploadedBackgrounds(imageFiles);
       }
     } catch {
@@ -961,7 +968,8 @@ export default function SettingsPage() {
                             if (!file || !token || !user) return;
 
                             setIsUploadingBg(true);
-                            const backgroundsPath = `/home/${user.username}/backgrounds`;
+                            const userHome = getUserHomePath(user.username);
+                            const backgroundsPath = `${userHome}/backgrounds`;
 
                             try {
                               // First, ensure the backgrounds directory exists
@@ -972,7 +980,7 @@ export default function SettingsPage() {
                                   "Content-Type": "application/json",
                                 },
                                 body: JSON.stringify({
-                                  path: `/home/${user.username}`,
+                                  path: userHome,
                                   name: "backgrounds",
                                 }),
                               });
@@ -989,7 +997,7 @@ export default function SettingsPage() {
                               });
 
                               if (response.ok) {
-                                const imagePath = `/api/files/download?path=${backgroundsPath}/${file.name}`;
+                                const imagePath = `/api/files/download?path=${encodeURIComponent(`${backgroundsPath}/${file.name}`)}`;
                                 updateDesktopSettings({ backgroundImage: imagePath });
                                 // Refresh the gallery
                                 fetchUploadedBackgrounds();
@@ -1037,11 +1045,13 @@ export default function SettingsPage() {
                           <Label className="text-xs text-muted-foreground">Your Uploaded Backgrounds</Label>
                           <div className="grid grid-cols-4 gap-2">
                             {uploadedBackgrounds.map((imgUrl) => {
-                              const isSelected = settings.desktop.backgroundImage === imgUrl;
+                              // Strip token from URL for storage comparison
+                              const pathWithoutToken = imgUrl.replace(/&token=[^&]+$/, "");
+                              const isSelected = settings.desktop.backgroundImage === pathWithoutToken;
                               return (
                                 <button
                                   key={imgUrl}
-                                  onClick={() => updateDesktopSettings({ backgroundImage: imgUrl })}
+                                  onClick={() => updateDesktopSettings({ backgroundImage: pathWithoutToken })}
                                   className={`
                                     relative h-16 rounded-lg border-2 overflow-hidden transition-all duration-200
                                     ${isSelected

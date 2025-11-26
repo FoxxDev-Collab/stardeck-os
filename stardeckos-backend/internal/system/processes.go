@@ -25,6 +25,25 @@ type Process struct {
 	StartTime   int64   `json:"start_time"`
 }
 
+// getSystemUptime returns system uptime in seconds
+func getSystemUptime() (float64, error) {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 1 {
+		return 0, fmt.Errorf("invalid uptime format")
+	}
+	return strconv.ParseFloat(fields[0], 64)
+}
+
+// getClockTicks returns the system clock ticks per second (usually 100)
+func getClockTicks() int64 {
+	// On most Linux systems, this is 100 (USER_HZ)
+	return 100
+}
+
 // ListProcesses returns a list of all running processes
 func ListProcesses() ([]Process, error) {
 	processes := make([]Process, 0)
@@ -43,6 +62,8 @@ func ListProcesses() ([]Process, error) {
 
 	// Get system info for CPU calculation
 	pageSize := os.Getpagesize()
+	uptime, _ := getSystemUptime()
+	clkTck := getClockTicks()
 
 	for _, entry := range entries {
 		// Skip non-numeric entries (not PIDs)
@@ -51,7 +72,7 @@ func ListProcesses() ([]Process, error) {
 			continue
 		}
 
-		proc, err := getProcessInfo(pid, pageSize)
+		proc, err := getProcessInfo(pid, pageSize, uptime, clkTck)
 		if err != nil {
 			// Process may have exited, skip it
 			continue
@@ -63,7 +84,7 @@ func ListProcesses() ([]Process, error) {
 	return processes, nil
 }
 
-func getProcessInfo(pid int, pageSize int) (*Process, error) {
+func getProcessInfo(pid int, pageSize int, uptime float64, clkTck int64) (*Process, error) {
 	procPath := filepath.Join("/proc", strconv.Itoa(pid))
 
 	// Read /proc/[pid]/stat
@@ -88,7 +109,7 @@ func getProcessInfo(pid int, pageSize int) (*Process, error) {
 
 	// Parse the rest of the fields after the closing parenthesis
 	rest := strings.Fields(statStr[end+2:])
-	if len(rest) < 20 {
+	if len(rest) < 22 {
 		return nil, fmt.Errorf("not enough fields in stat")
 	}
 
@@ -96,14 +117,32 @@ func getProcessInfo(pid int, pageSize int) (*Process, error) {
 	proc.PPID, _ = strconv.Atoi(rest[1])
 	proc.Threads, _ = strconv.Atoi(rest[17])
 
-	// Memory (rss is in pages)
+	// CPU time: utime (field 13) + stime (field 14) in clock ticks
+	// Fields are 0-indexed after the command, so utime=11, stime=12
+	utime, _ := strconv.ParseInt(rest[11], 10, 64)
+	stime, _ := strconv.ParseInt(rest[12], 10, 64)
+	totalTime := utime + stime
+
+	// Start time (in clock ticks since boot) - field 21 (0-indexed: 19)
+	startTime, _ := strconv.ParseInt(rest[19], 10, 64)
+	proc.StartTime = startTime
+
+	// Calculate CPU percentage
+	// Process uptime in seconds = system_uptime - (starttime / clk_tck)
+	processUptime := uptime - (float64(startTime) / float64(clkTck))
+	if processUptime > 0 {
+		// CPU % = (total_time / clk_tck) / process_uptime * 100
+		proc.CPUPercent = (float64(totalTime) / float64(clkTck)) / processUptime * 100
+		// Cap at reasonable value and round
+		if proc.CPUPercent > 100 {
+			proc.CPUPercent = 100
+		}
+	}
+
+	// Memory (rss is in pages) - field 23 (0-indexed: 21)
 	rss, _ := strconv.ParseInt(rest[21], 10, 64)
 	proc.MemoryBytes = uint64(rss) * uint64(pageSize)
 	proc.MemoryMB = float64(proc.MemoryBytes) / (1024 * 1024)
-
-	// Start time (in clock ticks since boot)
-	startTime, _ := strconv.ParseInt(rest[19], 10, 64)
-	proc.StartTime = startTime
 
 	// Get user from /proc/[pid]/status
 	statusData, err := os.ReadFile(filepath.Join(procPath, "status"))
@@ -188,5 +227,7 @@ func KillProcess(pid int, signal syscall.Signal) error {
 // GetProcess returns info for a single process
 func GetProcess(pid int) (*Process, error) {
 	pageSize := os.Getpagesize()
-	return getProcessInfo(pid, pageSize)
+	uptime, _ := getSystemUptime()
+	clkTck := getClockTicks()
+	return getProcessInfo(pid, pageSize, uptime, clkTck)
 }

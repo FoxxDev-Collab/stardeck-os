@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/lib/auth-context";
 import { SettingsProvider } from "@/lib/settings-context";
+import { Toaster } from "@/components/ui/sonner";
 
 const ibmPlexMono = IBM_Plex_Mono({
   variable: "--font-mono",
@@ -28,6 +29,7 @@ export default function RootLayout({
           <SettingsProvider>
             <AuthProvider>
               {children}
+              <Toaster />
             </AuthProvider>
           </SettingsProvider>
         </ThemeProvider>

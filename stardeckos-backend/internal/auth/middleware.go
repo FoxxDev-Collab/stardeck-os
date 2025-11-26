@@ -168,6 +168,11 @@ func getTokenFromRequest(c echo.Context) string {
 		return cookie.Value
 	}
 
+	// Try query parameter (useful for image/file URLs that can't use headers)
+	if token := c.QueryParam("token"); token != "" {
+		return token
+	}
+
 	return ""
 }
 
