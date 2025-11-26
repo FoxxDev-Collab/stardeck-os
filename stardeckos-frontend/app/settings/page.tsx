@@ -9,6 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -43,6 +45,12 @@ import {
   ExternalLink,
   Image,
   ImagePlus,
+  Box,
+  FolderOpen,
+  RotateCw,
+  Network,
+  Play,
+  ShieldAlert,
 } from "lucide-react";
 import { BackgroundType } from "@/lib/settings-context";
 import { ThemeImportDialog } from "@/components/theme-import-dialog";
@@ -72,6 +80,7 @@ export default function SettingsPage() {
     updateTraySettings,
     updateThemeSettings,
     updateDesktopSettings,
+    updateContainerSettings,
     resetSettings,
     customThemes,
     removeCustomTheme,
@@ -227,7 +236,7 @@ export default function SettingsPage() {
           </div>
 
           <Tabs defaultValue="taskbar" className="w-full">
-            <TabsList className="grid w-full grid-cols-5 bg-card/70 border border-border/50">
+            <TabsList className="grid w-full grid-cols-6 bg-card/70 border border-border/50">
               <TabsTrigger value="taskbar" className="gap-2 data-[state=active]:bg-accent/20">
                 <Monitor className="w-4 h-4" />
                 <span className="hidden sm:inline">Taskbar</span>
@@ -243,6 +252,10 @@ export default function SettingsPage() {
               <TabsTrigger value="desktop" className="gap-2 data-[state=active]:bg-accent/20">
                 <Layout className="w-4 h-4" />
                 <span className="hidden sm:inline">Desktop</span>
+              </TabsTrigger>
+              <TabsTrigger value="containers" className="gap-2 data-[state=active]:bg-accent/20">
+                <Box className="w-4 h-4" />
+                <span className="hidden sm:inline">Containers</span>
               </TabsTrigger>
               <TabsTrigger value="security" className="gap-2 data-[state=active]:bg-accent/20">
                 <Shield className="w-4 h-4" />
@@ -1098,6 +1111,142 @@ export default function SettingsPage() {
                     <p className="text-sm text-muted-foreground">
                       Using the default Stardeck OS background with grid pattern.
                     </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Container Settings */}
+            <TabsContent value="containers" className="mt-6 space-y-4">
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FolderOpen className="w-5 h-5 text-accent" />
+                    Default Volume Path
+                  </CardTitle>
+                  <CardDescription>
+                    Set a default host path for volume mounts when creating containers.
+                    Useful when you have a dedicated data drive.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="default-volume-path">Host Path</Label>
+                    <Input
+                      id="default-volume-path"
+                      placeholder="/mnt/data/containers"
+                      value={settings.container.defaultVolumePath}
+                      onChange={(e) => updateContainerSettings({ defaultVolumePath: e.target.value })}
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      When you apply image configuration, volume mounts will use this path as a prefix.
+                      Leave empty to use system defaults.
+                    </p>
+                  </div>
+
+                  {settings.container.defaultVolumePath && (
+                    <div className="p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center gap-2 text-sm">
+                        <HardDrive className="w-4 h-4 text-accent" />
+                        <span className="text-muted-foreground">Example mount:</span>
+                      </div>
+                      <code className="text-xs font-mono mt-1 block text-accent">
+                        {settings.container.defaultVolumePath}/postgres-data → /var/lib/postgresql/data
+                      </code>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <RotateCw className="w-5 h-5 text-accent" />
+                    Default Container Behavior
+                  </CardTitle>
+                  <CardDescription>
+                    Set default options for new containers
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="default-restart-policy">Restart Policy</Label>
+                      <Select
+                        value={settings.container.defaultRestartPolicy}
+                        onValueChange={(value) => updateContainerSettings({ defaultRestartPolicy: value as "no" | "always" | "unless-stopped" | "on-failure" })}
+                      >
+                        <SelectTrigger id="default-restart-policy">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="no">No (manual restart)</SelectItem>
+                          <SelectItem value="always">Always</SelectItem>
+                          <SelectItem value="unless-stopped">Unless Stopped</SelectItem>
+                          <SelectItem value="on-failure">On Failure</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="default-network-mode">Network Mode</Label>
+                      <Select
+                        value={settings.container.defaultNetworkMode}
+                        onValueChange={(value) => updateContainerSettings({ defaultNetworkMode: value as "bridge" | "host" | "none" })}
+                      >
+                        <SelectTrigger id="default-network-mode">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bridge">Bridge (isolated)</SelectItem>
+                          <SelectItem value="host">Host (shared network)</SelectItem>
+                          <SelectItem value="none">None (no network)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <Separator className="bg-border/50" />
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Play className="w-5 h-5 text-chart-3" />
+                      <div>
+                        <Label htmlFor="auto-start" className="font-medium">Auto-start Containers</Label>
+                        <p className="text-xs text-muted-foreground">Start containers immediately after creation</p>
+                      </div>
+                    </div>
+                    <Switch
+                      id="auto-start"
+                      checked={settings.container.autoStartContainers}
+                      onCheckedChange={(checked) => updateContainerSettings({ autoStartContainers: checked })}
+                    />
+                  </div>
+
+                  <Separator className="bg-border/50" />
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <ShieldAlert className="w-5 h-5 text-destructive" />
+                      <div>
+                        <Label htmlFor="privileged-default" className="font-medium">Privileged Mode Default</Label>
+                        <p className="text-xs text-muted-foreground">Enable privileged mode by default (not recommended)</p>
+                      </div>
+                    </div>
+                    <Switch
+                      id="privileged-default"
+                      checked={settings.container.enablePrivilegedByDefault}
+                      onCheckedChange={(checked) => updateContainerSettings({ enablePrivilegedByDefault: checked })}
+                    />
+                  </div>
+
+                  {settings.container.enablePrivilegedByDefault && (
+                    <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg">
+                      <p className="text-xs text-destructive">
+                        ⚠️ Privileged containers have full access to the host system. Only enable this if you understand the security implications.
+                      </p>
+                    </div>
                   )}
                 </CardContent>
               </Card>

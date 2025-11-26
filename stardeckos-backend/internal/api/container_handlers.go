@@ -892,6 +892,154 @@ func getContainerMetricsHandler(c echo.Context) error {
 
 // Image handlers
 
+// inspectImageHandler returns configuration hints for an image
+// It can optionally pull the image if not found locally
+func inspectImageHandler(c echo.Context) error {
+	image := c.QueryParam("image")
+	if image == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "image parameter is required",
+		})
+	}
+
+	pull := c.QueryParam("pull") == "true"
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Minute)
+	defer cancel()
+
+	config, err := podmanService.InspectImage(ctx, image, pull)
+	if err != nil {
+		// Check if it's a "not found" error
+		if !pull {
+			return c.JSON(http.StatusOK, map[string]interface{}{
+				"found":  false,
+				"error":  err.Error(),
+				"config": nil,
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to inspect image: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"found":  true,
+		"config": config,
+	})
+}
+
+// inspectImageWSHandler inspects an image with WebSocket streaming for pull progress
+func inspectImageWSHandler(c echo.Context) error {
+	// Upgrade to WebSocket
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+
+	// Read the request from WebSocket
+	_, message, err := ws.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	var req struct {
+		Image string `json:"image"`
+		Pull  bool   `json:"pull"`
+	}
+	if err := json.Unmarshal(message, &req); err != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"error": "Invalid request: " + err.Error(),
+		})
+		return nil
+	}
+
+	if req.Image == "" {
+		ws.WriteJSON(map[string]interface{}{
+			"error": "image is required",
+		})
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// Check if image exists locally first
+	imageExists := podmanService.ImageExists(ctx, req.Image)
+
+	if !imageExists && !req.Pull {
+		ws.WriteJSON(map[string]interface{}{
+			"found":  false,
+			"status": "not_found",
+			"error":  "Image not found locally",
+		})
+		return nil
+	}
+
+	if !imageExists && req.Pull {
+		// Send status update
+		ws.WriteJSON(map[string]interface{}{
+			"status":  "pulling",
+			"message": "Pulling image...",
+		})
+
+		// Pull with streaming output
+		outputChan := make(chan string, 100)
+		errChan := make(chan error, 1)
+
+		go func() {
+			errChan <- podmanService.PullImageWithProgress(ctx, req.Image, outputChan)
+		}()
+
+		// Stream pull output
+		for line := range outputChan {
+			ws.WriteJSON(map[string]interface{}{
+				"status": "pulling",
+				"output": line,
+			})
+		}
+
+		if err := <-errChan; err != nil {
+			ws.WriteJSON(map[string]interface{}{
+				"status": "error",
+				"error":  "Failed to pull image: " + err.Error(),
+			})
+			return nil
+		}
+
+		ws.WriteJSON(map[string]interface{}{
+			"status":  "pulled",
+			"message": "Image pulled successfully",
+		})
+	}
+
+	// Now inspect the image
+	ws.WriteJSON(map[string]interface{}{
+		"status":  "inspecting",
+		"message": "Inspecting image configuration...",
+	})
+
+	config, err := podmanService.InspectImage(ctx, req.Image, false)
+	if err != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"status": "error",
+			"error":  "Failed to inspect image: " + err.Error(),
+		})
+		return nil
+	}
+
+	// Send the final result
+	ws.WriteJSON(map[string]interface{}{
+		"status": "complete",
+		"found":  true,
+		"config": config,
+	})
+
+	return nil
+}
+
 // listImagesHandler returns all images
 func listImagesHandler(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)

@@ -240,6 +240,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	images := api.Group("/images")
 	images.Use(auth.RequireAuth(authSvc))
 	images.GET("", listImagesHandler)
+	images.GET("/inspect", inspectImageHandler)           // Check if image exists and get config
+	images.GET("/inspect/ws", inspectImageWSHandler)      // WebSocket: pull + inspect with progress
 	images.POST("/pull", pullImageHandler, auth.RequireRole(models.RoleAdmin))
 	images.DELETE("/:id", removeImageHandler, auth.RequireRole(models.RoleAdmin))
 

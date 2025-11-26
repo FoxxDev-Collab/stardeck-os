@@ -77,11 +77,23 @@ export interface DesktopSettings {
   backgroundImage: string; // URL or path to image
 }
 
+export type RestartPolicy = "no" | "always" | "unless-stopped" | "on-failure";
+export type NetworkMode = "bridge" | "host" | "none";
+
+export interface ContainerSettings {
+  defaultVolumePath: string; // Default host path for volume mounts (e.g., /mnt/data/containers)
+  defaultRestartPolicy: RestartPolicy;
+  defaultNetworkMode: NetworkMode;
+  autoStartContainers: boolean; // Start containers immediately after creation
+  enablePrivilegedByDefault: boolean; // Default value for privileged mode (usually false)
+}
+
 export interface Settings {
   taskbarPosition: TaskbarPosition;
   tray: TraySettings;
   theme: ThemeSettings;
   desktop: DesktopSettings;
+  container: ContainerSettings;
 }
 
 const defaultSettings: Settings = {
@@ -110,6 +122,13 @@ const defaultSettings: Settings = {
     backgroundGradient: "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)",
     backgroundImage: "",
   },
+  container: {
+    defaultVolumePath: "",
+    defaultRestartPolicy: "unless-stopped",
+    defaultNetworkMode: "bridge",
+    autoStartContainers: true,
+    enablePrivilegedByDefault: false,
+  },
 };
 
 interface SettingsContextType {
@@ -118,6 +137,7 @@ interface SettingsContextType {
   updateTraySettings: (updates: Partial<TraySettings>) => void;
   updateThemeSettings: (updates: Partial<ThemeSettings>) => void;
   updateDesktopSettings: (updates: Partial<DesktopSettings>) => void;
+  updateContainerSettings: (updates: Partial<ContainerSettings>) => void;
   resetSettings: () => void;
   // Custom theme management
   customThemes: CustomTheme[];
@@ -146,6 +166,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         // Ensure theme has activeCustomThemeId (migration)
         if (parsed.theme && parsed.theme.activeCustomThemeId === undefined) {
           parsed.theme.activeCustomThemeId = null;
+        }
+        // Ensure container settings exist (migration)
+        if (!parsed.container) {
+          parsed.container = defaultSettings.container;
         }
         setSettings({ ...defaultSettings, ...parsed });
       }
@@ -273,6 +297,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }));
   };
 
+  const updateContainerSettings = (updates: Partial<ContainerSettings>) => {
+    setSettings((prev) => ({
+      ...prev,
+      container: { ...prev.container, ...updates },
+    }));
+  };
+
   const resetSettings = () => {
     setSettings(defaultSettings);
   };
@@ -307,6 +338,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         updateTraySettings,
         updateThemeSettings,
         updateDesktopSettings,
+        updateContainerSettings,
         resetSettings,
         // Custom theme management
         customThemes,

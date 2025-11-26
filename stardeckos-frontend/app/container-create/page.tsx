@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import { useSettings } from "@/lib/settings-context";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,19 +80,42 @@ interface DeployStep {
   output?: boolean;
 }
 
+interface ImagePort {
+  port: number;
+  protocol: string;
+}
+
+interface ImageEnvVar {
+  key: string;
+  value: string;
+  has_value: boolean;
+}
+
+interface ImageConfig {
+  exposed_ports: ImagePort[];
+  environment: ImageEnvVar[];
+  volumes: string[];
+  labels: Record<string, string>;
+  working_dir: string;
+  user: string;
+  entrypoint: string[];
+  cmd: string[];
+}
+
 export default function ContainerCreatePage() {
   const router = useRouter();
   const { token } = useAuth();
+  const { settings } = useSettings();
   const deployOutputRef = useRef<HTMLDivElement>(null);
-  
-  // Basic settings
+
+  // Basic settings - use container defaults from settings
   const [containerName, setContainerName] = useState("");
   const [imageName, setImageName] = useState("");
   const [imageTag, setImageTag] = useState("latest");
-  const [autoStart, setAutoStart] = useState(true);
-  const [privileged, setPrivileged] = useState(false);
-  const [networkMode, setNetworkMode] = useState("bridge");
-  const [restartPolicy, setRestartPolicy] = useState("unless-stopped");
+  const [autoStart, setAutoStart] = useState(settings.container.autoStartContainers);
+  const [privileged, setPrivileged] = useState(settings.container.enablePrivilegedByDefault);
+  const [networkMode, setNetworkMode] = useState<string>(settings.container.defaultNetworkMode);
+  const [restartPolicy, setRestartPolicy] = useState<string>(settings.container.defaultRestartPolicy);
   
   // Docker Hub search
   const [searchQuery, setSearchQuery] = useState("");
@@ -134,12 +158,180 @@ export default function ContainerCreatePage() {
   const [deployComplete, setDeployComplete] = useState(false);
   const [deployError, setDeployError] = useState(false);
 
+  // Image inspection state
+  const [showInspectDialog, setShowInspectDialog] = useState(false);
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [inspectStatus, setInspectStatus] = useState<string>("");
+  const [inspectOutput, setInspectOutput] = useState<string[]>([]);
+  const [imageConfig, setImageConfig] = useState<ImageConfig | null>(null);
+  const [imageFound, setImageFound] = useState<boolean | null>(null);
+  const inspectOutputRef = useRef<HTMLDivElement>(null);
+
   // Auto-scroll deploy output
   useEffect(() => {
     if (deployOutputRef.current) {
       deployOutputRef.current.scrollTop = deployOutputRef.current.scrollHeight;
     }
   }, [deployOutput, deploySteps]);
+
+  // Auto-scroll inspect output
+  useEffect(() => {
+    if (inspectOutputRef.current) {
+      inspectOutputRef.current.scrollTop = inspectOutputRef.current.scrollHeight;
+    }
+  }, [inspectOutput]);
+
+  // Inspect image via WebSocket (with optional pull)
+  const inspectImage = (pullIfNeeded: boolean) => {
+    if (!imageName) {
+      setError("Please enter an image name first");
+      return;
+    }
+
+    setShowInspectDialog(true);
+    setIsInspecting(true);
+    setInspectStatus("connecting");
+    setInspectOutput([]);
+    setImageConfig(null);
+    setImageFound(null);
+
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/images/inspect/ws`;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      const fullImage = imageTag ? `${imageName}:${imageTag}` : imageName;
+      ws.send(JSON.stringify({ image: fullImage, pull: pullIfNeeded }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.error) {
+          setInspectStatus("error");
+          setInspectOutput(prev => [...prev, `Error: ${data.error}`]);
+          setIsInspecting(false);
+          return;
+        }
+
+        if (data.status === "pulling") {
+          setInspectStatus("pulling");
+          if (data.output) {
+            setInspectOutput(prev => [...prev, data.output]);
+          } else if (data.message) {
+            setInspectOutput(prev => [...prev, data.message]);
+          }
+        } else if (data.status === "pulled") {
+          setInspectOutput(prev => [...prev, "✓ Image pulled successfully"]);
+        } else if (data.status === "inspecting") {
+          setInspectStatus("inspecting");
+          setInspectOutput(prev => [...prev, "Analyzing image configuration..."]);
+        } else if (data.status === "complete") {
+          setInspectStatus("complete");
+          setImageFound(data.found);
+          if (data.config) {
+            setImageConfig(data.config);
+            setInspectOutput(prev => [...prev, "✓ Image configuration loaded"]);
+          }
+          setIsInspecting(false);
+        } else if (data.status === "not_found") {
+          setInspectStatus("not_found");
+          setImageFound(false);
+          setIsInspecting(false);
+        }
+      } catch (err) {
+        console.error("WebSocket message parse error:", err);
+      }
+    };
+
+    ws.onerror = () => {
+      setInspectStatus("error");
+      setInspectOutput(prev => [...prev, "WebSocket connection failed"]);
+      setIsInspecting(false);
+    };
+
+    ws.onclose = () => {
+      if (isInspecting) {
+        setIsInspecting(false);
+      }
+    };
+  };
+
+  // Apply image configuration to form
+  const applyImageConfig = () => {
+    if (!imageConfig) return;
+
+    // Apply exposed ports
+    if (imageConfig.exposed_ports && imageConfig.exposed_ports.length > 0) {
+      const newPorts: PortMapping[] = imageConfig.exposed_ports.map(p => ({
+        hostPort: String(p.port),
+        containerPort: String(p.port),
+        protocol: (p.protocol || "tcp") as "tcp" | "udp",
+      }));
+      setPorts(prev => {
+        // Merge with existing, avoiding duplicates
+        const existingContainerPorts = new Set(prev.map(p => `${p.containerPort}/${p.protocol}`));
+        const toAdd = newPorts.filter(p => !existingContainerPorts.has(`${p.containerPort}/${p.protocol}`));
+        return [...prev, ...toAdd];
+      });
+    }
+
+    // Apply volumes - use default volume path from settings if available
+    if (imageConfig.volumes && imageConfig.volumes.length > 0) {
+      const defaultBasePath = settings.container.defaultVolumePath;
+      // Generate a container-specific subdirectory name from the image name
+      const containerSubdir = containerName || imageName.replace(/[^a-zA-Z0-9-_]/g, '-');
+
+      const newVolumes: VolumeMount[] = imageConfig.volumes.map(v => {
+        // Create host path: basePath/containerName/last-part-of-container-path
+        // e.g., /mnt/data/containers/postgres/data for /var/lib/postgresql/data
+        const volName = v.split('/').filter(Boolean).pop() || 'data';
+        const hostPath = defaultBasePath
+          ? `${defaultBasePath}/${containerSubdir}/${volName}`
+          : "";
+        return {
+          hostPath,
+          containerPath: v,
+          readOnly: false,
+        };
+      });
+      setVolumes(prev => {
+        const existingPaths = new Set(prev.map(v => v.containerPath));
+        const toAdd = newVolumes.filter(v => !existingPaths.has(v.containerPath));
+        return [...prev, ...toAdd];
+      });
+    }
+
+    // Apply environment variables (only those with values, skip PATH and common system vars)
+    const skipEnvVars = new Set(["PATH", "HOME", "HOSTNAME", "TERM", "LANG", "LC_ALL"]);
+    if (imageConfig.environment && imageConfig.environment.length > 0) {
+      const newEnvVars: EnvVar[] = imageConfig.environment
+        .filter(e => e.has_value && !skipEnvVars.has(e.key) && !e.key.startsWith("GPG_"))
+        .map(e => ({
+          key: e.key,
+          value: e.value,
+        }));
+      setEnvVars(prev => {
+        const existingKeys = new Set(prev.map(e => e.key));
+        const toAdd = newEnvVars.filter(e => !existingKeys.has(e.key));
+        return [...prev, ...toAdd];
+      });
+    }
+
+    // Apply working directory
+    if (imageConfig.working_dir && !workingDir) {
+      setWorkingDir(imageConfig.working_dir);
+    }
+
+    // Apply user
+    if (imageConfig.user && !user) {
+      setUser(imageConfig.user);
+    }
+
+    setShowInspectDialog(false);
+  };
 
   // Live validation when key fields change
   useEffect(() => {
@@ -543,20 +735,48 @@ export default function ContainerCreatePage() {
                 </div>
 
                 {imageName && (
-                  <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">
-                      Will pull: <code className="px-1.5 py-0.5 bg-background rounded">{imageName}:{imageTag}</code>
-                    </span>
-                    <a 
-                      href={`https://hub.docker.com/r/${imageName}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-auto text-xs text-primary hover:underline flex items-center gap-1"
-                    >
-                      View on Docker Hub
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg">
+                      <Info className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm">
+                        Will pull: <code className="px-1.5 py-0.5 bg-background rounded">{imageName}:{imageTag}</code>
+                      </span>
+                      <a
+                        href={`https://hub.docker.com/r/${imageName}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-auto text-xs text-primary hover:underline flex items-center gap-1"
+                      >
+                        View on Docker Hub
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+
+                    {/* Inspect Image Buttons */}
+                    <div className="flex items-center gap-2 p-3 bg-accent/10 border border-accent/20 rounded-lg">
+                      <Download className="h-4 w-4 text-accent" />
+                      <span className="text-sm flex-1">
+                        Pull image to auto-detect ports, volumes, and environment variables
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => inspectImage(true)}
+                        disabled={isInspecting}
+                      >
+                        {isInspecting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Inspecting...
+                          </>
+                        ) : (
+                          <>
+                            <Search className="h-4 w-4 mr-2" />
+                            Pull & Inspect
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -1051,6 +1271,154 @@ export default function ContainerCreatePage() {
                 Close
               </Button>
             ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Image Inspection Dialog */}
+      <Dialog open={showInspectDialog} onOpenChange={(open) => !isInspecting && setShowInspectDialog(open)}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {inspectStatus === "complete" ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  Image Configuration Loaded
+                </>
+              ) : inspectStatus === "error" || inspectStatus === "not_found" ? (
+                <>
+                  <XCircle className="h-5 w-5 text-red-500" />
+                  {inspectStatus === "not_found" ? "Image Not Found" : "Inspection Failed"}
+                </>
+              ) : (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  {inspectStatus === "pulling" ? "Pulling Image..." : "Inspecting Image..."}
+                </>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Pull Progress Output */}
+          {inspectOutput.length > 0 && (
+            <div className="mt-2">
+              <Label className="mb-2 block text-sm">Progress</Label>
+              <ScrollArea className="h-32 border rounded-lg bg-black/90 p-3">
+                <div ref={inspectOutputRef} className="font-mono text-xs text-green-400 space-y-0.5">
+                  {inspectOutput.map((line, index) => (
+                    <div key={index} className="whitespace-pre-wrap">{line}</div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          )}
+
+          {/* Image Configuration Results */}
+          {imageConfig && inspectStatus === "complete" && (
+            <div className="mt-4 space-y-4">
+              <Label className="block text-sm font-semibold">Discovered Configuration</Label>
+
+              {/* Exposed Ports */}
+              {imageConfig.exposed_ports && imageConfig.exposed_ports.length > 0 && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Network className="h-4 w-4 text-accent" />
+                    <span className="text-sm font-medium">Exposed Ports ({imageConfig.exposed_ports.length})</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {imageConfig.exposed_ports.map((port, i) => (
+                      <span key={i} className="px-2 py-1 bg-accent/20 rounded text-xs font-mono">
+                        {port.port}/{port.protocol}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Volume Mounts */}
+              {imageConfig.volumes && imageConfig.volumes.length > 0 && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HardDrive className="h-4 w-4 text-accent" />
+                    <span className="text-sm font-medium">Required Volumes ({imageConfig.volumes.length})</span>
+                  </div>
+                  <div className="space-y-1">
+                    {imageConfig.volumes.map((vol, i) => (
+                      <div key={i} className="text-xs font-mono text-muted-foreground">
+                        {vol}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Environment Variables */}
+              {imageConfig.environment && imageConfig.environment.filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME"].includes(e.key)).length > 0 && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Settings className="h-4 w-4 text-accent" />
+                    <span className="text-sm font-medium">
+                      Environment Variables ({imageConfig.environment.filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME"].includes(e.key)).length})
+                    </span>
+                  </div>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {imageConfig.environment
+                      .filter(e => e.has_value && !["PATH", "HOME", "HOSTNAME", "TERM", "LANG", "LC_ALL"].includes(e.key) && !e.key.startsWith("GPG_"))
+                      .map((env, i) => (
+                        <div key={i} className="text-xs font-mono">
+                          <span className="text-primary">{env.key}</span>
+                          <span className="text-muted-foreground">=</span>
+                          <span className="text-muted-foreground truncate">{env.value.length > 50 ? env.value.substring(0, 50) + "..." : env.value}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Working Directory */}
+              {imageConfig.working_dir && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-accent" />
+                    <span className="text-sm font-medium">Working Directory:</span>
+                    <span className="text-xs font-mono text-muted-foreground">{imageConfig.working_dir}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* No configuration found */}
+              {(!imageConfig.exposed_ports || imageConfig.exposed_ports.length === 0) &&
+               (!imageConfig.volumes || imageConfig.volumes.length === 0) &&
+               (!imageConfig.environment || imageConfig.environment.filter(e => e.has_value).length === 0) && (
+                <div className="p-3 bg-muted/50 rounded-lg text-center text-muted-foreground text-sm">
+                  No specific configuration hints found in this image.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Not found message */}
+          {inspectStatus === "not_found" && (
+            <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-center">
+              <p className="text-sm text-destructive">
+                Image not found locally. Click "Pull & Inspect" to download it.
+              </p>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 mt-4">
+            {inspectStatus === "complete" && imageConfig && (
+              <Button onClick={applyImageConfig}>
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+                Apply Configuration
+              </Button>
+            )}
+            {!isInspecting && (
+              <Button variant="outline" onClick={() => setShowInspectDialog(false)}>
+                {inspectStatus === "complete" ? "Skip" : "Close"}
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

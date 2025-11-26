@@ -1165,6 +1165,213 @@ func (p *PodmanService) ComposePull(ctx context.Context, projectDir string, proj
 	return cmd.Wait()
 }
 
+// ImageConfig represents the configuration hints extracted from an image
+type ImageConfig struct {
+	ExposedPorts []ImagePort       `json:"exposed_ports"`
+	Environment  []ImageEnvVar     `json:"environment"`
+	Volumes      []string          `json:"volumes"`
+	Labels       map[string]string `json:"labels"`
+	WorkingDir   string            `json:"working_dir"`
+	User         string            `json:"user"`
+	Entrypoint   []string          `json:"entrypoint"`
+	Cmd          []string          `json:"cmd"`
+}
+
+// ImagePort represents an exposed port from an image
+type ImagePort struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+}
+
+// ImageEnvVar represents an environment variable from an image
+type ImageEnvVar struct {
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	HasValue bool   `json:"has_value"` // false if just a key with no default
+}
+
+// podmanImageInspect represents the JSON output from podman image inspect
+type podmanImageInspect struct {
+	ID      string `json:"Id"`
+	Digest  string `json:"Digest"`
+	RepoTags []string `json:"RepoTags"`
+	Config  struct {
+		User         string              `json:"User"`
+		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+		Env          []string            `json:"Env"`
+		Cmd          []string            `json:"Cmd"`
+		Volumes      map[string]struct{} `json:"Volumes"`
+		WorkingDir   string              `json:"WorkingDir"`
+		Entrypoint   []string            `json:"Entrypoint"`
+		Labels       map[string]string   `json:"Labels"`
+	} `json:"Config"`
+}
+
+// InspectImage inspects an image and returns its configuration hints
+// If the image doesn't exist locally and pull is true, it will pull it first
+func (p *PodmanService) InspectImage(ctx context.Context, image string, pull bool) (*ImageConfig, error) {
+	normalizedImage := normalizeImageName(image)
+
+	// Check if image exists locally
+	if !p.ImageExists(ctx, image) {
+		if !pull {
+			return nil, fmt.Errorf("image not found locally: %s", image)
+		}
+		// Pull the image first
+		if err := p.PullImage(ctx, image); err != nil {
+			return nil, fmt.Errorf("failed to pull image: %w", err)
+		}
+	}
+
+	// Inspect the image
+	output, err := p.podmanCmd(ctx, "image", "inspect", normalizedImage, "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect image: %w", err)
+	}
+
+	var images []podmanImageInspect
+	if err := json.Unmarshal(output, &images); err != nil {
+		return nil, fmt.Errorf("failed to parse image inspect: %w", err)
+	}
+
+	if len(images) == 0 {
+		return nil, fmt.Errorf("image not found: %s", image)
+	}
+
+	img := images[0]
+	config := &ImageConfig{
+		ExposedPorts: make([]ImagePort, 0),
+		Environment:  make([]ImageEnvVar, 0),
+		Volumes:      make([]string, 0),
+		Labels:       img.Config.Labels,
+		WorkingDir:   img.Config.WorkingDir,
+		User:         img.Config.User,
+		Entrypoint:   img.Config.Entrypoint,
+		Cmd:          img.Config.Cmd,
+	}
+
+	// Parse exposed ports (format: "80/tcp" or "53/udp")
+	for portSpec := range img.Config.ExposedPorts {
+		parts := strings.Split(portSpec, "/")
+		if len(parts) >= 1 {
+			port, err := strconv.Atoi(parts[0])
+			if err != nil {
+				continue
+			}
+			protocol := "tcp"
+			if len(parts) >= 2 {
+				protocol = parts[1]
+			}
+			config.ExposedPorts = append(config.ExposedPorts, ImagePort{
+				Port:     port,
+				Protocol: protocol,
+			})
+		}
+	}
+
+	// Parse environment variables (format: "KEY=value" or just "KEY")
+	for _, env := range img.Config.Env {
+		parts := strings.SplitN(env, "=", 2)
+		envVar := ImageEnvVar{
+			Key:      parts[0],
+			HasValue: len(parts) > 1,
+		}
+		if len(parts) > 1 {
+			envVar.Value = parts[1]
+		}
+		config.Environment = append(config.Environment, envVar)
+	}
+
+	// Parse volumes
+	for volPath := range img.Config.Volumes {
+		config.Volumes = append(config.Volumes, volPath)
+	}
+
+	return config, nil
+}
+
+// InspectImageWithProgress inspects an image with streaming progress for pull
+func (p *PodmanService) InspectImageWithProgress(ctx context.Context, image string, pull bool, outputChan chan<- string) (*ImageConfig, error) {
+	normalizedImage := normalizeImageName(image)
+
+	// Check if image exists locally
+	if !p.ImageExists(ctx, image) {
+		if !pull {
+			return nil, fmt.Errorf("image not found locally: %s", image)
+		}
+		// Pull the image with progress
+		if err := p.PullImageWithProgress(ctx, image, outputChan); err != nil {
+			return nil, fmt.Errorf("failed to pull image: %w", err)
+		}
+	}
+
+	// Inspect the image
+	output, err := p.podmanCmd(ctx, "image", "inspect", normalizedImage, "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect image: %w", err)
+	}
+
+	var images []podmanImageInspect
+	if err := json.Unmarshal(output, &images); err != nil {
+		return nil, fmt.Errorf("failed to parse image inspect: %w", err)
+	}
+
+	if len(images) == 0 {
+		return nil, fmt.Errorf("image not found: %s", image)
+	}
+
+	img := images[0]
+	config := &ImageConfig{
+		ExposedPorts: make([]ImagePort, 0),
+		Environment:  make([]ImageEnvVar, 0),
+		Volumes:      make([]string, 0),
+		Labels:       img.Config.Labels,
+		WorkingDir:   img.Config.WorkingDir,
+		User:         img.Config.User,
+		Entrypoint:   img.Config.Entrypoint,
+		Cmd:          img.Config.Cmd,
+	}
+
+	// Parse exposed ports
+	for portSpec := range img.Config.ExposedPorts {
+		parts := strings.Split(portSpec, "/")
+		if len(parts) >= 1 {
+			port, err := strconv.Atoi(parts[0])
+			if err != nil {
+				continue
+			}
+			protocol := "tcp"
+			if len(parts) >= 2 {
+				protocol = parts[1]
+			}
+			config.ExposedPorts = append(config.ExposedPorts, ImagePort{
+				Port:     port,
+				Protocol: protocol,
+			})
+		}
+	}
+
+	// Parse environment variables
+	for _, env := range img.Config.Env {
+		parts := strings.SplitN(env, "=", 2)
+		envVar := ImageEnvVar{
+			Key:      parts[0],
+			HasValue: len(parts) > 1,
+		}
+		if len(parts) > 1 {
+			envVar.Value = parts[1]
+		}
+		config.Environment = append(config.Environment, envVar)
+	}
+
+	// Parse volumes
+	for volPath := range img.Config.Volumes {
+		config.Volumes = append(config.Volumes, volPath)
+	}
+
+	return config, nil
+}
+
 // GetStackContainers returns containers belonging to a compose project
 func (p *PodmanService) GetStackContainers(ctx context.Context, projectName string) ([]models.StackContainer, error) {
 	// List containers with the compose project label
