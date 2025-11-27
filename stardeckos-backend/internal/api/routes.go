@@ -221,13 +221,14 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	containers.GET("", listContainersHandler)
 	containers.GET("/:id", getContainerHandler)
 	containers.POST("", createContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.POST("/adopt", adoptContainerHandler, auth.RequireRole(models.RoleAdmin)) // Adopt existing containers
 	containers.POST("/validate", validateContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.GET("/deploy", deployContainerHandler, auth.RequireRole(models.RoleAdmin)) // WebSocket
 	containers.PUT("/:id", updateContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.DELETE("/:id", removeContainerHandler, auth.RequireRole(models.RoleAdmin))
-	containers.POST("/:id/start", startContainerHandler, auth.RequireOperatorOrAdmin())
-	containers.POST("/:id/stop", stopContainerHandler, auth.RequireOperatorOrAdmin())
-	containers.POST("/:id/restart", restartContainerHandler, auth.RequireOperatorOrAdmin())
+	containers.POST("/:id/start", startContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.POST("/:id/stop", stopContainerHandler, auth.RequireRole(models.RoleAdmin))
+	containers.POST("/:id/restart", restartContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.GET("/:id/logs", getContainerLogsHandler)
 	containers.GET("/:id/stats", getContainerStatsHandler)
 	containers.GET("/:id/metrics", getContainerMetricsHandler)
@@ -240,8 +241,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	images := api.Group("/images")
 	images.Use(auth.RequireAuth(authSvc))
 	images.GET("", listImagesHandler)
-	images.GET("/inspect", inspectImageHandler)           // Check if image exists and get config
-	images.GET("/inspect/ws", inspectImageWSHandler)      // WebSocket: pull + inspect with progress
+	images.GET("/inspect", inspectImageHandler)      // Check if image exists and get config
+	images.GET("/inspect/ws", inspectImageWSHandler) // WebSocket: pull + inspect with progress
 	images.POST("/pull", pullImageHandler, auth.RequireRole(models.RoleAdmin))
 	images.DELETE("/:id", removeImageHandler, auth.RequireRole(models.RoleAdmin))
 
@@ -271,7 +272,11 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	templates.Use(auth.RequireAuth(authSvc))
 	templates.GET("", listTemplatesHandler)
 	templates.GET("/:id", getTemplateHandler)
+	templates.GET("/:id/export", exportTemplateHandler)
 	templates.POST("", createTemplateHandler, auth.RequireRole(models.RoleAdmin))
+	templates.POST("/import", importTemplateHandler, auth.RequireRole(models.RoleAdmin))
+	templates.PUT("/:id", updateTemplateHandler, auth.RequireRole(models.RoleAdmin))
+	templates.POST("/:id/deploy", deployTemplateHandler, auth.RequireRole(models.RoleAdmin))
 	templates.DELETE("/:id", deleteTemplateHandler, auth.RequireRole(models.RoleAdmin))
 
 	// Stack management (compose-based deployments)

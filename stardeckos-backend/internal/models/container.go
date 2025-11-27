@@ -130,6 +130,16 @@ type UpdateContainerRequest struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 }
 
+// AdoptContainerRequest represents a request to adopt an existing container into Stardeck
+type AdoptContainerRequest struct {
+	ContainerID string `json:"container_id" validate:"required"` // Podman container ID or name
+	HasWebUI    bool   `json:"has_web_ui"`
+	WebUIPort   int    `json:"web_ui_port,omitempty"`  // Host port for web UI
+	WebUIPath   string `json:"web_ui_path,omitempty"`  // Path prefix (default: "/")
+	Icon        string `json:"icon,omitempty"`         // Icon name for desktop
+	AutoStart   bool   `json:"auto_start,omitempty"`   // Auto-start on boot
+}
+
 // DeployComposeRequest represents a compose file deployment request
 type DeployComposeRequest struct {
 	Content     string            `json:"content" validate:"required"`     // YAML content

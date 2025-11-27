@@ -30,7 +30,7 @@ interface ContainerInfo {
 }
 
 function ContainerAppContent() {
-  const { isAuthenticated, isLoading, token } = useAuth();
+  const { isAuthenticated, isLoading, token, user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const containerId = searchParams.get("id");
@@ -42,6 +42,9 @@ function ContainerAppContent() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [actionInProgress, setActionInProgress] = useState(false);
+
+  // Only admins can control containers
+  const isAdmin = user?.role === "admin" || user?.is_pam_admin;
 
   // Fetch container info
   const fetchContainer = useCallback(async () => {
@@ -180,7 +183,18 @@ function ContainerAppContent() {
   }
 
   const isRunning = container.status === "running";
+
+  // Determine if we should use the proxy or direct access
+  // Use proxy when: on HTTPS (mixed content blocked) or non-standard ports (likely behind reverse proxy)
+  const useProxy = window.location.protocol === "https:" ||
+                   (window.location.port !== "" && window.location.port !== "80" && window.location.port !== "3000");
+
+  // Proxy URL goes through the backend which can access localhost container ports
   const proxyUrl = `/api/containers/${containerId}/proxy${container.web_ui_path || "/"}`;
+  // Direct URL for development or when HTTP access works
+  const directUrl = `http://${window.location.hostname}:${container.web_ui_port}${container.web_ui_path || "/"}`;
+
+  const iframeUrl = useProxy ? proxyUrl : directUrl;
 
   // Fullscreen mode
   if (isFullscreen) {
@@ -220,7 +234,7 @@ function ContainerAppContent() {
         {isRunning ? (
           <iframe
             key={iframeKey}
-            src={proxyUrl}
+            src={iframeUrl}
             className="w-full h-[calc(100%-2.5rem)] mt-10 border-0"
             title={container.name}
           />
@@ -230,14 +244,16 @@ function ContainerAppContent() {
               <Box className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Container is not running</h3>
               <p className="text-muted-foreground mb-4">Start the container to access its web interface.</p>
-              <Button onClick={() => handleContainerAction("start")} disabled={actionInProgress}>
-                {actionInProgress ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4 mr-2" />
-                )}
-                Start Container
-              </Button>
+              {isAdmin && (
+                <Button onClick={() => handleContainerAction("start")} disabled={actionInProgress}>
+                  {actionInProgress ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 mr-2" />
+                  )}
+                  Start Container
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -266,36 +282,40 @@ function ContainerAppContent() {
             </span>
           </div>
           <div className="flex items-center gap-1">
-            {isRunning ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleContainerAction("stop")}
-                disabled={actionInProgress}
-                title="Stop container"
-              >
-                {actionInProgress ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+            {isAdmin && (
+              <>
+                {isRunning ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleContainerAction("stop")}
+                    disabled={actionInProgress}
+                    title="Stop container"
+                  >
+                    {actionInProgress ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                  </Button>
                 ) : (
-                  <Square className="w-4 h-4" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleContainerAction("start")}
+                    disabled={actionInProgress}
+                    title="Start container"
+                  >
+                    {actionInProgress ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                  </Button>
                 )}
-              </Button>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleContainerAction("start")}
-                disabled={actionInProgress}
-                title="Start container"
-              >
-                {actionInProgress ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-              </Button>
+                <div className="w-px h-6 bg-border/50 mx-1" />
+              </>
             )}
-            <div className="w-px h-6 bg-border/50 mx-1" />
             <Button variant="ghost" size="sm" onClick={handleRefresh} title="Refresh">
               <RefreshCw className="w-4 h-4" />
             </Button>
@@ -313,7 +333,7 @@ function ContainerAppContent() {
           {isRunning ? (
             <iframe
               key={iframeKey}
-              src={proxyUrl}
+              src={iframeUrl}
               className="absolute inset-0 w-full h-full border-0"
               title={container.name}
             />
@@ -322,15 +342,19 @@ function ContainerAppContent() {
               <div className="text-center">
                 <Box className="w-20 h-20 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-xl font-semibold mb-2">Container is not running</h3>
-                <p className="text-muted-foreground mb-6">Start the container to access its web interface.</p>
-                <Button size="lg" onClick={() => handleContainerAction("start")} disabled={actionInProgress}>
-                  {actionInProgress ? (
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="w-5 h-5 mr-2" />
-                  )}
-                  Start Container
-                </Button>
+                <p className="text-muted-foreground mb-6">
+                  {isAdmin ? "Start the container to access its web interface." : "Contact an administrator to start this container."}
+                </p>
+                {isAdmin && (
+                  <Button size="lg" onClick={() => handleContainerAction("start")} disabled={actionInProgress}>
+                    {actionInProgress ? (
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="w-5 h-5 mr-2" />
+                    )}
+                    Start Container
+                  </Button>
+                )}
               </div>
             </div>
           )}

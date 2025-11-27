@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -51,6 +52,9 @@ func checkPodmanHandler(c echo.Context) error {
 			"available":         false,
 			"compose_available": composeAvailable,
 			"error":             err.Error(),
+			"mode":              podmanService.GetMode(),
+			"target_user":       podmanService.GetTargetUser(),
+			"running_as_root":   podmanService.IsRunningAsRoot(),
 		})
 	}
 
@@ -61,6 +65,9 @@ func checkPodmanHandler(c echo.Context) error {
 		"available":         true,
 		"version":           version,
 		"compose_available": composeAvailable,
+		"mode":              podmanService.GetMode(),
+		"target_user":       podmanService.GetTargetUser(),
+		"running_as_root":   podmanService.IsRunningAsRoot(),
 	})
 }
 
@@ -183,14 +190,28 @@ func listContainersHandler(c echo.Context) error {
 		})
 	}
 
+	// Collect container IDs for bulk database lookup
+	containerIDs := make([]string, len(containers))
+	for i, container := range containers {
+		containerIDs[i] = container.ContainerID
+	}
+
+	// Bulk fetch Stardeck metadata from database (single query instead of N queries)
+	dbContainers, err := containerRepo.GetByContainerIDs(containerIDs)
+	if err != nil {
+		c.Logger().Warn("Failed to fetch container metadata from database: ", err)
+		// Continue without database enrichment
+	}
+
 	// Enrich with Stardeck metadata from database
-	for i := range containers {
-		dbContainer, err := containerRepo.GetByContainerID(containers[i].ContainerID)
-		if err == nil && dbContainer != nil {
-			containers[i].ID = dbContainer.ID
-			containers[i].HasWebUI = dbContainer.HasWebUI
-			containers[i].Icon = dbContainer.Icon
-			containers[i].CreatedAt = dbContainer.CreatedAt
+	if dbContainers != nil {
+		for i := range containers {
+			if dbContainer, ok := dbContainers[containers[i].ContainerID]; ok {
+				containers[i].ID = dbContainer.ID
+				containers[i].HasWebUI = dbContainer.HasWebUI
+				containers[i].Icon = dbContainer.Icon
+				containers[i].CreatedAt = dbContainer.CreatedAt
+			}
 		}
 	}
 
@@ -782,6 +803,101 @@ func removeContainerHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]string{
 		"status": "removed",
+	})
+}
+
+// adoptContainerHandler adopts an existing Podman container into Stardeck's database
+// This allows containers created outside Stardeck to be managed and get desktop icons
+func adoptContainerHandler(c echo.Context) error {
+	var req models.AdoptContainerRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request: " + err.Error(),
+		})
+	}
+
+	if req.ContainerID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "container_id is required",
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	// Verify container exists in Podman
+	containerInfo, err := podmanService.InspectContainer(ctx, req.ContainerID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Container not found in Podman: " + err.Error(),
+		})
+	}
+
+	// Check if container is already in database
+	existing, _ := containerRepo.GetByContainerID(containerInfo.ID)
+	if existing != nil {
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error": "Container is already managed by Stardeck",
+			"id":    existing.ID,
+		})
+	}
+
+	// Set defaults
+	webUIPath := req.WebUIPath
+	if webUIPath == "" {
+		webUIPath = "/"
+	}
+
+	// Map status from Podman state
+	status := models.ContainerStatusUnknown
+	switch containerInfo.State.Status {
+	case "running":
+		status = models.ContainerStatusRunning
+	case "exited":
+		status = models.ContainerStatusExited
+	case "paused":
+		status = models.ContainerStatusPaused
+	case "created":
+		status = models.ContainerStatusCreated
+	}
+
+	// Create database entry
+	user := c.Get("user").(*models.User)
+	userID := int64(user.ID)
+	dbContainer := &models.Container{
+		ContainerID: containerInfo.ID,
+		Name:        containerInfo.Name,
+		Image:       containerInfo.Config.Image,
+		Status:      status,
+		HasWebUI:    req.HasWebUI,
+		WebUIPort:   req.WebUIPort,
+		WebUIPath:   webUIPath,
+		Icon:        req.Icon,
+		AutoStart:   req.AutoStart,
+		CreatedBy:   &userID,
+	}
+
+	if err := containerRepo.Create(dbContainer); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to adopt container: " + err.Error(),
+		})
+	}
+
+	logAudit(user, models.ActionContainerCreate, dbContainer.Name, map[string]interface{}{
+		"action":       "adopt",
+		"container_id": containerInfo.ID,
+		"has_web_ui":   req.HasWebUI,
+	})
+
+	c.Logger().Infof("Container %s adopted by %s", containerInfo.Name, user.Username)
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"id":           dbContainer.ID,
+		"container_id": dbContainer.ContainerID,
+		"name":         dbContainer.Name,
+		"status":       "adopted",
+		"has_web_ui":   dbContainer.HasWebUI,
+		"web_ui_port":  dbContainer.WebUIPort,
 	})
 }
 
@@ -1418,6 +1534,248 @@ func deleteTemplateHandler(c echo.Context) error {
 	})
 }
 
+// updateTemplateHandler updates a template
+func updateTemplateHandler(c echo.Context) error {
+	id := c.Param("id")
+
+	template, err := templateRepo.GetByID(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Template not found",
+		})
+	}
+
+	var req models.CreateTemplateRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request: " + err.Error(),
+		})
+	}
+
+	// Update fields
+	if req.Name != "" {
+		template.Name = req.Name
+	}
+	if req.Description != "" {
+		template.Description = req.Description
+	}
+	if req.Version != "" {
+		template.Version = req.Version
+	}
+	if req.ComposeContent != "" {
+		template.ComposeContent = req.ComposeContent
+	}
+	if req.EnvDefaults != nil {
+		envJSON, _ := json.Marshal(req.EnvDefaults)
+		template.EnvDefaults = string(envJSON)
+	}
+	if req.VolumeHints != nil {
+		hintsJSON, _ := json.Marshal(req.VolumeHints)
+		template.VolumeHints = string(hintsJSON)
+	}
+	if req.Tags != nil {
+		tagsJSON, _ := json.Marshal(req.Tags)
+		template.Tags = string(tagsJSON)
+	}
+
+	if err := templateRepo.Update(template); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to update template: " + err.Error(),
+		})
+	}
+
+	user := c.Get("user").(*models.User)
+	logAudit(user, "template.update", template.Name, nil)
+
+	return c.JSON(http.StatusOK, template)
+}
+
+// deployTemplateHandler deploys a stack from a template
+func deployTemplateHandler(c echo.Context) error {
+	id := c.Param("id")
+
+	template, err := templateRepo.GetByID(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Template not found",
+		})
+	}
+
+	var req models.DeployTemplateRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request: " + err.Error(),
+		})
+	}
+
+	// Generate a project name if not provided
+	projectName := req.ProjectName
+	if projectName == "" {
+		projectName = template.Name + "-" + time.Now().Format("20060102-150405")
+	}
+
+	// Parse template environment defaults and merge with request environment
+	envVars := make(map[string]string)
+	if template.EnvDefaults != "" {
+		json.Unmarshal([]byte(template.EnvDefaults), &envVars)
+	}
+	// Override with request environment
+	for k, v := range req.Environment {
+		envVars[k] = v
+	}
+
+	// Build compose content with variable substitution
+	composeContent := template.ComposeContent
+
+	// Create a new stack from the template
+	user := c.Get("user").(*models.User)
+	userID := user.ID
+	stack := &models.Stack{
+		Name:           projectName,
+		Description:    fmt.Sprintf("Deployed from template: %s", template.Name),
+		ComposeContent: composeContent,
+		Status:         models.StackStatusStopped,
+		CreatedBy:      &userID,
+	}
+
+	// Build env content from merged variables
+	var envLines []string
+	for k, v := range envVars {
+		envLines = append(envLines, fmt.Sprintf("%s=%s", k, v))
+	}
+	if len(envLines) > 0 {
+		stack.EnvContent = strings.Join(envLines, "\n")
+	}
+
+	// Create the stack in the database
+	if err := stackRepo.Create(stack); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to create stack: " + err.Error(),
+		})
+	}
+
+	// Increment template usage count
+	templateRepo.IncrementUsage(id)
+
+	logAudit(user, models.ActionTemplateDeploy, template.Name, map[string]interface{}{
+		"template_id":  template.ID,
+		"project_name": projectName,
+		"stack_id":     stack.ID,
+	})
+
+	return c.JSON(http.StatusCreated, map[string]interface{}{
+		"status":   "created",
+		"stack_id": stack.ID,
+		"message":  "Stack created from template. Use the stack deploy endpoint to deploy it.",
+	})
+}
+
+// exportTemplateHandler exports a template as JSON
+func exportTemplateHandler(c echo.Context) error {
+	id := c.Param("id")
+
+	template, err := templateRepo.GetByID(id)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Template not found",
+		})
+	}
+
+	// Build export object with parsed JSON fields
+	export := map[string]interface{}{
+		"id":              template.ID,
+		"name":            template.Name,
+		"description":     template.Description,
+		"author":          template.Author,
+		"version":         template.Version,
+		"compose_content": template.ComposeContent,
+		"created_at":      template.CreatedAt,
+	}
+
+	// Parse JSON fields
+	if template.EnvDefaults != "" {
+		var envDefaults map[string]string
+		if json.Unmarshal([]byte(template.EnvDefaults), &envDefaults) == nil {
+			export["env_defaults"] = envDefaults
+		}
+	}
+	if template.VolumeHints != "" {
+		var volumeHints []models.VolumeHint
+		if json.Unmarshal([]byte(template.VolumeHints), &volumeHints) == nil {
+			export["volume_hints"] = volumeHints
+		}
+	}
+	if template.Tags != "" {
+		var tags []string
+		if json.Unmarshal([]byte(template.Tags), &tags) == nil {
+			export["tags"] = tags
+		}
+	}
+
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.json"`, template.Name))
+	return c.JSON(http.StatusOK, export)
+}
+
+// importTemplateHandler imports a template from JSON
+func importTemplateHandler(c echo.Context) error {
+	var importData struct {
+		Name           string              `json:"name"`
+		Description    string              `json:"description"`
+		Version        string              `json:"version"`
+		ComposeContent string              `json:"compose_content"`
+		EnvDefaults    map[string]string   `json:"env_defaults"`
+		VolumeHints    []models.VolumeHint `json:"volume_hints"`
+		Tags           []string            `json:"tags"`
+	}
+
+	if err := c.Bind(&importData); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid import data: " + err.Error(),
+		})
+	}
+
+	if importData.Name == "" || importData.ComposeContent == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Name and compose_content are required",
+		})
+	}
+
+	user := c.Get("user").(*models.User)
+
+	template := &models.Template{
+		Name:           importData.Name,
+		Description:    importData.Description,
+		Author:         user.Username,
+		Version:        importData.Version,
+		ComposeContent: importData.ComposeContent,
+	}
+
+	if importData.EnvDefaults != nil {
+		envJSON, _ := json.Marshal(importData.EnvDefaults)
+		template.EnvDefaults = string(envJSON)
+	}
+	if importData.VolumeHints != nil {
+		hintsJSON, _ := json.Marshal(importData.VolumeHints)
+		template.VolumeHints = string(hintsJSON)
+	}
+	if importData.Tags != nil {
+		tagsJSON, _ := json.Marshal(importData.Tags)
+		template.Tags = string(tagsJSON)
+	}
+
+	if err := templateRepo.Create(template); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to import template: " + err.Error(),
+		})
+	}
+
+	logAudit(user, models.ActionTemplateCreate, template.Name, map[string]interface{}{
+		"imported": true,
+	})
+
+	return c.JSON(http.StatusCreated, template)
+}
+
 // Desktop apps handler - returns containers with web UIs for desktop icons
 func listDesktopAppsHandler(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
@@ -1494,6 +1852,11 @@ func proxyContainerWebUIHandler(c echo.Context) error {
 		}
 	}
 
+	// Ensure path starts with /
+	if !strings.HasPrefix(proxyPath, "/") {
+		proxyPath = "/" + proxyPath
+	}
+
 	// Build target URL - use localhost since container port is mapped to host
 	targetURL := fmt.Sprintf("http://localhost:%d%s", container.WebUIPort, proxyPath)
 	if c.QueryString() != "" {
@@ -1522,9 +1885,9 @@ func proxyContainerWebUIHandler(c echo.Context) error {
 		}
 	}
 
-	// Execute request
+	// Execute request with longer timeout for slow container apps
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse // Don't follow redirects
 		},
@@ -1538,16 +1901,68 @@ func proxyContainerWebUIHandler(c echo.Context) error {
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
+	// Build the proxy base path for URL rewriting
+	proxyBasePath := fmt.Sprintf("/api/containers/%s/proxy", containerID)
+
+	// Handle redirects - rewrite Location header to go through proxy
+	if location := resp.Header.Get("Location"); location != "" {
+		// If it's an absolute path on the container, rewrite to proxy path
+		if strings.HasPrefix(location, "/") {
+			resp.Header.Set("Location", proxyBasePath+location)
+		}
+	}
+
+	// Copy response headers (before body)
 	for key, values := range resp.Header {
+		// Skip Content-Length as we may modify the body
+		if key == "Content-Length" {
+			continue
+		}
 		for _, value := range values {
 			c.Response().Header().Add(key, value)
 		}
 	}
 
-	// Set status and copy body
-	c.Response().WriteHeader(resp.StatusCode)
-	io.Copy(c.Response().Writer, resp.Body)
+	// Check if this is HTML content that might need URL rewriting
+	contentType := resp.Header.Get("Content-Type")
+	isHTML := strings.Contains(contentType, "text/html")
+
+	if isHTML {
+		// Read the body
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{
+				"error": "Failed to read response: " + err.Error(),
+			})
+		}
+
+		// Inject a <base> tag to help browsers resolve relative URLs
+		// This is cleaner than rewriting all URLs in the HTML
+		bodyStr := string(body)
+
+		// Check if there's already a base tag
+		if !strings.Contains(strings.ToLower(bodyStr), "<base") {
+			// Find <head> and inject base tag after it
+			headIdx := strings.Index(strings.ToLower(bodyStr), "<head")
+			if headIdx != -1 {
+				// Find the end of the head tag
+				headEndIdx := strings.Index(bodyStr[headIdx:], ">")
+				if headEndIdx != -1 {
+					insertPos := headIdx + headEndIdx + 1
+					baseTag := fmt.Sprintf(`<base href="%s/">`, proxyBasePath)
+					bodyStr = bodyStr[:insertPos] + baseTag + bodyStr[insertPos:]
+				}
+			}
+		}
+
+		c.Response().Header().Set("Content-Length", strconv.Itoa(len(bodyStr)))
+		c.Response().WriteHeader(resp.StatusCode)
+		c.Response().Write([]byte(bodyStr))
+	} else {
+		// Non-HTML content, pass through as-is
+		c.Response().WriteHeader(resp.StatusCode)
+		io.Copy(c.Response().Writer, resp.Body)
+	}
 
 	return nil
 }

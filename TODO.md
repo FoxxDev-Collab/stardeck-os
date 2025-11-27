@@ -1,5 +1,103 @@
 # Stardeck OS - Development TODO
 
+---
+
+## Build & Deployment Guide
+
+### Prerequisites (Build Machine)
+- Node.js 18+ and npm
+- Go 1.21+
+- Git
+
+### Prerequisites (Target Server)
+- Rocky Linux 10 (or compatible RHEL-based distro)
+- Podman (for container management)
+- Firewalld (optional, for automatic firewall config)
+
+### Quick Build Commands
+
+```bash
+# Clean previous builds
+make clean
+
+# Full production build (frontend + backend)
+make build
+
+# Create deployment package
+make package
+# Creates: stardeck-<version>.tar.gz
+```
+
+### Development Mode
+
+```bash
+# Terminal 1: Frontend dev server (hot reload)
+make dev-frontend
+# Runs on http://localhost:3000
+
+# Terminal 2: Backend dev server
+make dev-backend
+# Runs on http://localhost:8080
+
+# Frontend proxies API requests to backend automatically
+```
+
+### Production Deployment
+
+**Option 1: Manual Deploy**
+```bash
+# Transfer package to server
+scp stardeck-*.tar.gz root@<server-ip>:/tmp/
+
+# SSH to server and install
+ssh root@<server-ip>
+cd /tmp
+tar -xzf stardeck-*.tar.gz
+bash install.sh
+```
+
+**Option 2: Makefile Deploy**
+```bash
+make deploy VM=<server-ip> USER=root
+```
+
+### What the Install Script Does
+1. Creates `/opt/stardeck/` (binary location)
+2. Creates `/var/lib/stardeck/` (data, database, certs)
+3. Installs systemd service (`stardeck.service`)
+4. Opens firewall port 443
+5. Enables and starts the service
+
+### Post-Installation
+- Access: `https://<server-ip>`
+- Default login: `admin` / `admin`
+- **Change the password immediately!**
+
+### Service Management
+```bash
+systemctl status stardeck
+systemctl restart stardeck
+journalctl -u stardeck -f
+```
+
+### Important Notes
+- The Go binary embeds the frontend at **compile time** via `go:embed`
+- After any frontend changes, you **must rebuild the backend** for changes to take effect
+- The version in the package name comes from `git describe --tags --always --dirty`
+- Commit changes or create a tag for clean version names
+
+### Directory Structure (Installed)
+```
+/opt/stardeck/
+└── stardeckos          # Main binary
+
+/var/lib/stardeck/
+├── stardeck.db         # SQLite database
+└── certs/              # TLS certificates (auto-generated)
+```
+
+---
+
 ## Completed
 
 ### Backend
@@ -76,9 +174,7 @@
 - [x] M2A.5: Firewall UI (zones, rules editor)
 - [x] M2A.6: Routes and connections UI
 
-## In Progress
-
-### Phase 2B: Container Management
+### Phase 2B: Container Management (Completed)
 - [x] M2B.1: Podman integration (list, create, start, stop, remove, inspect)
 - [x] M2B.2: Container Manager UI (5-tab interface: Containers, Images, Volumes, Networks, Stacks)
 - [x] M2B.3: Compose parser and validator (YAML-based stacks)
@@ -94,11 +190,14 @@
 - [x] M2B.13: Container terminal (WebSocket-based shell access)
 - [x] M2B.14: Image browser (pull, search, delete images)
 - [x] M2B.15: Stack deployment (create, deploy, start, stop, delete compose stacks)
-- [ ] M2B.16: Web UI proxy system (iframe containers with web interfaces)
-- [ ] M2B.17: Desktop icon integration (add running containers to desktop)
-- [ ] M2B.18: Container template system (save/load container configurations)
-- [ ] M2B.19: Testing with complex multi-container apps
-- [ ] M2B.20: Documentation and user guide
+- [x] M2B.16: Web UI proxy system (iframe containers with web interfaces)
+- [x] M2B.17: Desktop icon integration (add running containers to desktop)
+- [x] M2B.18: Container template system (save/load container configurations)
+- [x] M2B.19: Adopt container feature (bring existing containers into Stardeck)
+- [x] M2B.20: Rootful/rootless Podman auto-detection
+- [x] M2B.21: Admin-only container control (start/stop/restart restricted)
+- [ ] M2B.22: Testing with complex multi-container apps
+- [ ] M2B.23: Documentation and user guide
 
 ---
 
@@ -170,10 +269,13 @@
 - [ ] API key management for service accounts
 
 ### DevOps
-- [ ] Systemd service file
-- [ ] RPM packaging
-- [ ] Production build configuration
+- [x] Systemd service file (`scripts/stardeck.service`)
+- [x] Production build configuration (Makefile with build/package/deploy)
+- [x] Install script (`scripts/install.sh`)
+- [x] TLS certificate auto-generation
+- [ ] RPM packaging (.spec file)
 - [ ] Backup/restore utilities
+- [ ] Prometheus metrics endpoint
 
 ---
 
@@ -295,9 +397,15 @@ The Container Manager provides comprehensive Podman container orchestration:
 - Container metadata enrichment from SQLite database (web UI flags, custom icons)
 - **Storage Configuration**: Admin can configure Podman's storage location (graphroot) for using alternate drives
 
-**Remaining Tasks**:
+**Completed Recently**:
 - Web UI proxy system (iframe integration for containerized web apps)
 - Desktop icon integration (add containers as desktop shortcuts)
 - Container template system (save/load common configurations)
+- Adopt container feature (bring existing Podman containers into Stardeck)
+- Rootful/rootless Podman auto-detection
+- Admin-only container control enforcement
+
+**Remaining Tasks**:
 - Multi-container application testing and optimization
+- Container backup/export functionality
 

@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +85,53 @@ func (r *ContainerRepo) GetByContainerID(containerID string) (*models.Container,
 	c.HasWebUI = hasWebUI == 1
 	c.AutoStart = autoStart == 1
 	return c, nil
+}
+
+// GetByContainerIDs retrieves multiple containers by their Podman container IDs
+// Returns a map keyed by container_id for efficient lookup
+func (r *ContainerRepo) GetByContainerIDs(containerIDs []string) (map[string]*models.Container, error) {
+	if len(containerIDs) == 0 {
+		return make(map[string]*models.Container), nil
+	}
+
+	// Build placeholder string for IN clause
+	placeholders := make([]string, len(containerIDs))
+	args := make([]interface{}, len(containerIDs))
+	for i, id := range containerIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := `
+		SELECT id, container_id, name, image, status, compose_file, compose_path,
+			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			created_at, updated_at, created_by, labels, metadata
+		FROM containers WHERE container_id IN (` + strings.Join(placeholders, ",") + `)`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*models.Container)
+	for rows.Next() {
+		c := &models.Container{}
+		var hasWebUI, autoStart int
+		err := rows.Scan(
+			&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
+			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+			&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
+		)
+		if err != nil {
+			return nil, err
+		}
+		c.HasWebUI = hasWebUI == 1
+		c.AutoStart = autoStart == 1
+		result[c.ContainerID] = c
+	}
+
+	return result, nil
 }
 
 // GetByName retrieves a container by its name

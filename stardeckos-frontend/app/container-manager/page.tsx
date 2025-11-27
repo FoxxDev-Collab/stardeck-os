@@ -15,6 +15,7 @@ import { ContainerTerminal } from "./components/container-terminal";
 import { ContainerLogs } from "./components/container-logs";
 import { ImageBrowser } from "./components/image-browser";
 import { StacksTab } from "@/components/stacks-tab";
+import { TemplatesTab } from "@/components/templates-tab";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -56,6 +57,7 @@ import {
   FolderOpen,
   ShieldAlert,
   Pencil,
+  FileCode2,
 } from "lucide-react";
 
 interface Container {
@@ -195,6 +197,30 @@ export default function ContainerManagerPage() {
   const [newGraphRoot, setNewGraphRoot] = useState("");
   const [updatingStorage, setUpdatingStorage] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+
+  // Adopt container dialog state
+  const [showAdoptDialog, setShowAdoptDialog] = useState(false);
+  const [adoptingContainer, setAdoptingContainer] = useState<Container | null>(null);
+  const [adoptForm, setAdoptForm] = useState({
+    hasWebUI: false,
+    webUIPort: "",
+    webUIPath: "/",
+    icon: "",
+    autoStart: false,
+  });
+  const [isAdopting, setIsAdopting] = useState(false);
+
+  // Edit container dialog state
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editingContainer, setEditingContainer] = useState<Container | null>(null);
+  const [editForm, setEditForm] = useState({
+    hasWebUI: false,
+    webUIPort: "",
+    webUIPath: "/",
+    icon: "",
+    autoStart: false,
+  });
+  const [isEditing, setIsEditing] = useState(false);
 
   // Create container form
   const [newContainer, setNewContainer] = useState({
@@ -508,6 +534,129 @@ export default function ContainerManagerPage() {
       alert(err instanceof Error ? err.message : `Failed to ${action} container`);
     } finally {
       setActionInProgress(null);
+    }
+  };
+
+  // Check if a container is managed by Stardeck (has a database entry)
+  const isManaged = (container: Container) => {
+    return container.id && container.id !== "" && container.id !== container.container_id;
+  };
+
+  // Open adopt dialog for unmanaged container
+  const openAdoptDialog = (container: Container) => {
+    setAdoptingContainer(container);
+    // Pre-fill port from first HTTP port mapping if available
+    const httpPort = container.ports?.find(p =>
+      p.container_port === 80 || p.container_port === 443 ||
+      p.container_port === 8080 || p.container_port === 3000
+    );
+    setAdoptForm({
+      hasWebUI: !!httpPort,
+      webUIPort: httpPort ? String(httpPort.host_port) : "",
+      webUIPath: "/",
+      icon: container.name.split("-")[0].toLowerCase(),
+      autoStart: false,
+    });
+    setShowAdoptDialog(true);
+  };
+
+  // Handle adopt container submission
+  const handleAdoptContainer = async () => {
+    if (!token || !adoptingContainer) return;
+
+    setIsAdopting(true);
+    try {
+      const response = await fetch("/api/containers/adopt", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          container_id: adoptingContainer.container_id,
+          has_web_ui: adoptForm.hasWebUI,
+          web_ui_port: adoptForm.hasWebUI ? parseInt(adoptForm.webUIPort) || 0 : 0,
+          web_ui_path: adoptForm.webUIPath || "/",
+          icon: adoptForm.icon,
+          auto_start: adoptForm.autoStart,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to adopt container");
+      }
+
+      setShowAdoptDialog(false);
+      setAdoptingContainer(null);
+      await fetchContainers();
+      alert(`Container "${adoptingContainer.name}" adopted successfully!`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to adopt container");
+    } finally {
+      setIsAdopting(false);
+    }
+  };
+
+  // Open edit dialog for managed container
+  const openEditDialog = async (container: Container) => {
+    if (!token) return;
+
+    // Fetch current container details to get web_ui settings
+    try {
+      const response = await fetch(`/api/containers/${container.container_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+
+      setEditingContainer(container);
+      setEditForm({
+        hasWebUI: data.has_web_ui || false,
+        webUIPort: data.web_ui_port ? String(data.web_ui_port) : "",
+        webUIPath: data.web_ui_path || "/",
+        icon: data.icon || "",
+        autoStart: data.auto_start || false,
+      });
+      setShowEditDialog(true);
+    } catch {
+      alert("Failed to load container details");
+    }
+  };
+
+  // Handle edit container submission
+  const handleEditContainer = async () => {
+    if (!token || !editingContainer) return;
+
+    setIsEditing(true);
+    try {
+      const response = await fetch(`/api/containers/${editingContainer.container_id}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          has_web_ui: editForm.hasWebUI,
+          web_ui_port: editForm.hasWebUI ? parseInt(editForm.webUIPort) || 0 : 0,
+          web_ui_path: editForm.webUIPath || "/",
+          icon: editForm.icon,
+          auto_start: editForm.autoStart,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update container");
+      }
+
+      setShowEditDialog(false);
+      setEditingContainer(null);
+      await fetchContainers();
+      alert(`Container "${editingContainer.name}" updated successfully!`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to update container");
+    } finally {
+      setIsEditing(false);
     }
   };
 
@@ -906,6 +1055,9 @@ export default function ContainerManagerPage() {
             <TabsTrigger value="stacks" className="gap-2">
               <Layers className="w-4 h-4" /> Stacks
             </TabsTrigger>
+            <TabsTrigger value="templates" className="gap-2">
+              <FileCode2 className="w-4 h-4" /> Templates
+            </TabsTrigger>
           </TabsList>
 
           {/* Containers Tab */}
@@ -1123,6 +1275,28 @@ export default function ContainerManagerPage() {
                                     title="Open Web UI"
                                   >
                                     <Globe className="w-4 h-4" />
+                                  </Button>
+                                )}
+                                {isAdmin && !isManaged(container) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openAdoptDialog(container)}
+                                    title="Adopt Container (configure for Stardeck)"
+                                    className="text-cyan-400 hover:text-cyan-400"
+                                  >
+                                    <Package className="w-4 h-4" />
+                                  </Button>
+                                )}
+                                {isAdmin && isManaged(container) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditDialog(container)}
+                                    title="Edit Container Settings"
+                                    className="text-amber-400 hover:text-amber-400"
+                                  >
+                                    <Pencil className="w-4 h-4" />
                                   </Button>
                                 )}
                                 {isAdmin && (
@@ -1378,6 +1552,11 @@ export default function ContainerManagerPage() {
           {/* Stacks Tab */}
           <TabsContent value="stacks" className="space-y-4">
             <StacksTab token={token || ""} isAdmin={isAdmin} composeAvailable={composeAvailable} />
+          </TabsContent>
+
+          {/* Templates Tab */}
+          <TabsContent value="templates" className="space-y-4">
+            <TemplatesTab token={token || ""} isAdmin={isAdmin} />
           </TabsContent>
         </Tabs>
       </div>
@@ -1735,6 +1914,257 @@ export default function ContainerManagerPage() {
                 </>
               ) : (
                 "Create Volume"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Adopt Container Dialog */}
+      <Dialog open={showAdoptDialog} onOpenChange={setShowAdoptDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-cyan-400" />
+              Adopt Container
+            </DialogTitle>
+            <DialogDescription>
+              Configure <span className="font-mono text-foreground">{adoptingContainer?.name}</span> for Stardeck management.
+              This enables desktop icons and web UI proxy.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Web UI Settings */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Has Web UI</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Enable to add desktop icon and proxy
+                  </p>
+                </div>
+                <Switch
+                  checked={adoptForm.hasWebUI}
+                  onCheckedChange={(checked) => setAdoptForm(prev => ({ ...prev, hasWebUI: checked }))}
+                />
+              </div>
+
+              {adoptForm.hasWebUI && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="web-ui-port">Web UI Host Port</Label>
+                    <Select
+                      value={adoptForm.webUIPort}
+                      onValueChange={(value) => setAdoptForm(prev => ({ ...prev, webUIPort: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select port" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {adoptingContainer?.ports?.map((port) => (
+                          <SelectItem key={port.host_port} value={String(port.host_port)}>
+                            {port.host_port} → {port.container_port}/{port.protocol}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Select the host port that serves the web interface
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="web-ui-path">Web UI Path</Label>
+                    <Input
+                      id="web-ui-path"
+                      value={adoptForm.webUIPath}
+                      onChange={(e) => setAdoptForm(prev => ({ ...prev, webUIPath: e.target.value }))}
+                      placeholder="/"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Path prefix for the web UI (usually &quot;/&quot;)
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Icon */}
+            <div className="space-y-2">
+              <Label htmlFor="icon-name">Icon Name</Label>
+              <Input
+                id="icon-name"
+                value={adoptForm.icon}
+                onChange={(e) => setAdoptForm(prev => ({ ...prev, icon: e.target.value }))}
+                placeholder="gitea, nextcloud, etc."
+              />
+              <p className="text-xs text-muted-foreground">
+                Used for desktop icon display
+              </p>
+            </div>
+
+            {/* Auto Start */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>Auto Start</Label>
+                <p className="text-xs text-muted-foreground">
+                  Start container on system boot
+                </p>
+              </div>
+              <Switch
+                checked={adoptForm.autoStart}
+                onCheckedChange={(checked) => setAdoptForm(prev => ({ ...prev, autoStart: checked }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowAdoptDialog(false);
+                setAdoptingContainer(null);
+              }}
+              disabled={isAdopting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAdoptContainer}
+              disabled={isAdopting || (adoptForm.hasWebUI && !adoptForm.webUIPort)}
+              className="gap-2"
+            >
+              {isAdopting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Adopting...
+                </>
+              ) : (
+                <>
+                  <Package className="w-4 h-4" />
+                  Adopt Container
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Container Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="w-5 h-5 text-amber-400" />
+              Edit Container
+            </DialogTitle>
+            <DialogDescription>
+              Update settings for {editingContainer?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Icon URL */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-icon">Icon URL</Label>
+              <Input
+                id="edit-icon"
+                placeholder="https://example.com/icon.svg"
+                value={editForm.icon}
+                onChange={(e) => setEditForm(prev => ({ ...prev, icon: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                URL to an icon image (SVG, PNG, etc.) for the desktop shortcut
+              </p>
+              {editForm.icon && (
+                <div className="flex items-center gap-2 p-2 bg-muted/50 rounded">
+                  <span className="text-xs text-muted-foreground">Preview:</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={editForm.icon}
+                    alt="Icon preview"
+                    className="w-8 h-8 object-contain"
+                    onError={(e) => (e.currentTarget.style.display = "none")}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Has Web UI */}
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-webui">Has Web UI</Label>
+              <Switch
+                id="edit-webui"
+                checked={editForm.hasWebUI}
+                onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, hasWebUI: checked }))}
+              />
+            </div>
+
+            {editForm.hasWebUI && (
+              <>
+                {/* Web UI Port */}
+                <div className="space-y-2">
+                  <Label htmlFor="edit-port">Web UI Port</Label>
+                  <Input
+                    id="edit-port"
+                    type="number"
+                    placeholder="8080"
+                    value={editForm.webUIPort}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, webUIPort: e.target.value }))}
+                  />
+                </div>
+
+                {/* Web UI Path */}
+                <div className="space-y-2">
+                  <Label htmlFor="edit-path">Web UI Path</Label>
+                  <Input
+                    id="edit-path"
+                    placeholder="/"
+                    value={editForm.webUIPath}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, webUIPath: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Auto Start */}
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-autostart">Auto Start</Label>
+              <Switch
+                id="edit-autostart"
+                checked={editForm.autoStart}
+                onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, autoStart: checked }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEditDialog(false);
+                setEditingContainer(null);
+              }}
+              disabled={isEditing}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEditContainer}
+              disabled={isEditing || (editForm.hasWebUI && !editForm.webUIPort)}
+              className="gap-2"
+            >
+              {isEditing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Pencil className="w-4 h-4" />
+                  Save Changes
+                </>
               )}
             </Button>
           </DialogFooter>

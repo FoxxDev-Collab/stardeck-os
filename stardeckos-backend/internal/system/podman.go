@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -15,24 +16,150 @@ import (
 	"stardeckos-backend/internal/models"
 )
 
+// podmanDebug controls whether Podman command execution is logged
+var podmanDebug = os.Getenv("STARDECK_PODMAN_DEBUG") == "true"
+
 // PodmanService provides operations for Podman container management
-type PodmanService struct{}
+type PodmanService struct {
+	// targetUser is the user whose Podman we should query (for rootless mode)
+	// If empty and running as root, will use root's Podman
+	targetUser string
+}
 
 // NewPodmanService creates a new PodmanService
+// Auto-detects the appropriate Podman user in this order:
+// 1. STARDECK_PODMAN_USER environment variable
+// 2. SUDO_USER environment variable (if run via sudo)
+// 3. First user with a running Podman socket (if running as root)
 func NewPodmanService() *PodmanService {
-	return &PodmanService{}
+	targetUser := os.Getenv("STARDECK_PODMAN_USER")
+
+	// If no explicit user set and running as root, try auto-detection
+	if targetUser == "" && os.Getuid() == 0 {
+		// First check SUDO_USER (the user who invoked sudo)
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
+			targetUser = sudoUser
+		} else {
+			// Try to find a user with Podman containers by scanning /run/user/*/
+			targetUser = detectPodmanUser()
+		}
+	}
+
+	return &PodmanService{
+		targetUser: targetUser,
+	}
+}
+
+// detectPodmanUser attempts to find a user with active Podman containers
+// by checking for Podman socket files in /run/user/*/
+func detectPodmanUser() string {
+	// Check /run/user directories for podman sockets
+	entries, err := os.ReadDir("/run/user")
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check if this user has a podman socket
+		socketPath := fmt.Sprintf("/run/user/%s/podman/podman.sock", entry.Name())
+		if _, err := os.Stat(socketPath); err == nil {
+			// Found a podman socket, get the username for this UID
+			uid, err := strconv.Atoi(entry.Name())
+			if err != nil {
+				continue
+			}
+
+			// Get username from /etc/passwd
+			cmd := exec.Command("getent", "passwd", fmt.Sprintf("%d", uid))
+			output, err := cmd.Output()
+			if err != nil {
+				continue
+			}
+
+			// Parse passwd entry: username:x:uid:gid:...
+			parts := strings.Split(string(output), ":")
+			if len(parts) > 0 && parts[0] != "" {
+				return parts[0]
+			}
+		}
+	}
+
+	return ""
+}
+
+// NewPodmanServiceWithUser creates a PodmanService targeting a specific user
+func NewPodmanServiceWithUser(user string) *PodmanService {
+	return &PodmanService{
+		targetUser: user,
+	}
+}
+
+// GetTargetUser returns the user whose Podman is being used
+func (p *PodmanService) GetTargetUser() string {
+	return p.targetUser
+}
+
+// GetMode returns "rootless" if targeting a user, "rootful" otherwise
+func (p *PodmanService) GetMode() string {
+	if p.targetUser != "" {
+		return "rootless"
+	}
+	return "rootful"
+}
+
+// IsRunningAsRoot returns true if the process is running as root
+func (p *PodmanService) IsRunningAsRoot() bool {
+	return os.Getuid() == 0
 }
 
 // podmanCmd executes a podman command and returns the output
+// If running as root and targetUser is set, runs the command as that user
 func (p *PodmanService) podmanCmd(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	var cmd *exec.Cmd
+	var cmdStr string
+
+	// Check if we're running as root and have a target user configured
+	if os.Getuid() == 0 && p.targetUser != "" {
+		// Use sudo -u to run as the target user
+		// This allows the root process to access rootless Podman containers
+		sudoArgs := []string{"-u", p.targetUser, "podman"}
+		sudoArgs = append(sudoArgs, args...)
+		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+		cmdStr = fmt.Sprintf("sudo -u %s podman %s", p.targetUser, strings.Join(args, " "))
+	} else {
+		cmd = exec.CommandContext(ctx, "podman", args...)
+		cmdStr = fmt.Sprintf("podman %s", strings.Join(args, " "))
+	}
+
+	if podmanDebug {
+		log.Printf("[PODMAN] Executing: %s", cmdStr)
+	}
+
+	startTime := time.Now()
 	output, err := cmd.Output()
+	duration := time.Since(startTime)
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			if podmanDebug {
+				log.Printf("[PODMAN] Command failed after %v: %s - stderr: %s", duration, cmdStr, string(exitErr.Stderr))
+			}
 			return nil, fmt.Errorf("podman error: %s", string(exitErr.Stderr))
+		}
+		if podmanDebug {
+			log.Printf("[PODMAN] Command failed after %v: %s - error: %v", duration, cmdStr, err)
 		}
 		return nil, err
 	}
+
+	if podmanDebug {
+		log.Printf("[PODMAN] Command completed in %v: %s (output: %d bytes)", duration, cmdStr, len(output))
+	}
+
 	return output, nil
 }
 
@@ -414,7 +541,16 @@ func (p *PodmanService) GetContainerLogs(ctx context.Context, containerID string
 	}
 	args = append(args, "--timestamps", containerID)
 
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	// Build command with rootless support
+	var cmd *exec.Cmd
+	if os.Getuid() == 0 && p.targetUser != "" {
+		sudoArgs := []string{"-u", p.targetUser, "podman"}
+		sudoArgs = append(sudoArgs, args...)
+		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, "podman", args...)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -615,7 +751,14 @@ func (p *PodmanService) PullImage(ctx context.Context, image string) error {
 // PullImageWithProgress pulls an image and streams progress to a channel
 func (p *PodmanService) PullImageWithProgress(ctx context.Context, image string, output chan<- string) error {
 	normalizedImage := normalizeImageName(image)
-	cmd := exec.CommandContext(ctx, "podman", "pull", normalizedImage)
+
+	// Build command with rootless support
+	var cmd *exec.Cmd
+	if os.Getuid() == 0 && p.targetUser != "" {
+		cmd = exec.CommandContext(ctx, "sudo", "-u", p.targetUser, "podman", "pull", normalizedImage)
+	} else {
+		cmd = exec.CommandContext(ctx, "podman", "pull", normalizedImage)
+	}
 
 	// Get stdout and stderr pipes
 	stdout, err := cmd.StdoutPipe()
@@ -634,16 +777,35 @@ func (p *PodmanService) PullImageWithProgress(ctx context.Context, image string,
 		return err
 	}
 
-	// Read both stdout and stderr
+	// Read both stdout and stderr with context awareness
 	go func() {
 		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
 		for scanner.Scan() {
-			line := scanner.Text()
-			if line != "" {
-				output <- line
+			select {
+			case <-ctx.Done():
+				close(output)
+				return
+			default:
+				line := scanner.Text()
+				if line != "" {
+					select {
+					case output <- line:
+					case <-ctx.Done():
+						close(output)
+						return
+					}
+				}
 			}
 		}
 		close(output)
+	}()
+
+	// Handle context cancellation
+	go func() {
+		<-ctx.Done()
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
 	}()
 
 	return cmd.Wait()
@@ -862,7 +1024,16 @@ func (p *PodmanService) StreamLogs(ctx context.Context, containerID string, tail
 	}
 	args = append(args, containerID)
 
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	// Build command with rootless support
+	var cmd *exec.Cmd
+	if os.Getuid() == 0 && p.targetUser != "" {
+		sudoArgs := []string{"-u", p.targetUser, "podman"}
+		sudoArgs = append(sudoArgs, args...)
+		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, "podman", args...)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -876,35 +1047,73 @@ func (p *PodmanService) StreamLogs(ctx context.Context, containerID string, tail
 		return err
 	}
 
-	// Read stdout
+	// Use a done channel to signal when goroutines complete
+	done := make(chan struct{}, 2)
+
+	// Read stdout with context awareness
 	go func() {
+		defer func() { done <- struct{}{} }()
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			line := scanner.Text()
-			ts, msg := parseLogLine(line)
-			logChan <- models.ContainerLog{
-				Timestamp: ts,
-				Stream:    "stdout",
-				Message:   msg,
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				line := scanner.Text()
+				ts, msg := parseLogLine(line)
+				select {
+				case logChan <- models.ContainerLog{
+					Timestamp: ts,
+					Stream:    "stdout",
+					Message:   msg,
+				}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
 
-	// Read stderr
+	// Read stderr with context awareness
 	go func() {
+		defer func() { done <- struct{}{} }()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			line := scanner.Text()
-			ts, msg := parseLogLine(line)
-			logChan <- models.ContainerLog{
-				Timestamp: ts,
-				Stream:    "stderr",
-				Message:   msg,
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				line := scanner.Text()
+				ts, msg := parseLogLine(line)
+				select {
+				case logChan <- models.ContainerLog{
+					Timestamp: ts,
+					Stream:    "stderr",
+					Message:   msg,
+				}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}()
 
-	return cmd.Wait()
+	// Wait for context cancellation or command completion
+	go func() {
+		<-ctx.Done()
+		// Kill the process when context is cancelled
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+	}()
+
+	// Wait for both goroutines to complete
+	<-done
+	<-done
+
+	// Wait for command to finish (will return error if killed)
+	cmd.Wait()
+	return ctx.Err()
 }
 
 // parseLogLine parses a timestamp-prefixed log line

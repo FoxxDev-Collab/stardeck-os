@@ -16,13 +16,13 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PortSelector } from "@/components/port-selector";
-import { 
-  ArrowLeft, 
-  Search, 
-  Plus, 
-  Trash2, 
-  Download, 
-  Upload, 
+import {
+  ArrowLeft,
+  Search,
+  Plus,
+  Trash2,
+  Download,
+  Upload,
   FileText,
   Network,
   HardDrive,
@@ -35,7 +35,8 @@ import {
   XCircle,
   AlertCircle,
   Loader2,
-  Terminal
+  Terminal,
+  Globe
 } from "lucide-react";
 
 interface DockerHubImage {
@@ -162,6 +163,12 @@ function ContainerCreateContent() {
   const [hostname, setHostname] = useState("");
   const [cpuLimit, setCpuLimit] = useState("");
   const [memoryLimit, setMemoryLimit] = useState("");
+
+  // Web UI settings (for desktop icon)
+  const [hasWebUI, setHasWebUI] = useState(false);
+  const [webUIPort, setWebUIPort] = useState("");
+  const [webUIPath, setWebUIPath] = useState("/");
+  const [containerIcon, setContainerIcon] = useState("");
   
   // UI state
   const [isCreating, setIsCreating] = useState(false);
@@ -347,6 +354,20 @@ function ContainerCreateContent() {
         // Set auto-start from Stardeck metadata
         if (data.auto_start !== undefined) {
           setAutoStart(data.auto_start);
+        }
+
+        // Set Web UI settings from Stardeck metadata
+        if (data.has_web_ui !== undefined) {
+          setHasWebUI(data.has_web_ui);
+        }
+        if (data.web_ui_port) {
+          setWebUIPort(String(data.web_ui_port));
+        }
+        if (data.web_ui_path) {
+          setWebUIPath(data.web_ui_path);
+        }
+        if (data.icon) {
+          setContainerIcon(data.icon);
         }
 
       } catch (err) {
@@ -576,6 +597,11 @@ function ContainerCreateContent() {
       hostname: hostname || undefined,
       cpu_limit: cpuLimit ? parseFloat(cpuLimit) : undefined,
       memory_limit: memoryLimit ? parseInt(memoryLimit) * 1024 * 1024 : undefined,
+      // Web UI settings for desktop icon
+      has_web_ui: hasWebUI,
+      web_ui_port: hasWebUI && webUIPort ? parseInt(webUIPort) : undefined,
+      web_ui_path: hasWebUI ? webUIPath || "/" : undefined,
+      icon: containerIcon || undefined,
     };
   };
 
@@ -1106,6 +1132,81 @@ function ContainerCreateContent() {
                         </p>
                       </div>
                       <Switch checked={privileged} onCheckedChange={setPrivileged} />
+                    </div>
+
+                    {/* Web UI / Desktop Icon Section */}
+                    <div className="pt-4 border-t">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Globe className="h-4 w-4 text-cyan-400" />
+                        <Label className="text-base font-semibold">Desktop App Settings</Label>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label>Has Web UI</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Enable to show as desktop app with icon
+                            </p>
+                          </div>
+                          <Switch checked={hasWebUI} onCheckedChange={setHasWebUI} />
+                        </div>
+
+                        {hasWebUI && (
+                          <>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label>Web UI Port</Label>
+                                <Select value={webUIPort} onValueChange={setWebUIPort}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select port" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {ports.length > 0 ? (
+                                      ports.map((port, index) => (
+                                        <SelectItem key={index} value={port.hostPort}>
+                                          {port.hostPort} → {port.containerPort}/{port.protocol}
+                                        </SelectItem>
+                                      ))
+                                    ) : (
+                                      <SelectItem value="" disabled>
+                                        Add ports first
+                                      </SelectItem>
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                  Host port that serves the web interface
+                                </p>
+                              </div>
+
+                              <div className="space-y-2">
+                                <Label>Web UI Path</Label>
+                                <Input
+                                  placeholder="/"
+                                  value={webUIPath}
+                                  onChange={(e) => setWebUIPath(e.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  URL path to app (e.g. &quot;/&quot; or &quot;/admin&quot;)
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Icon URL</Label>
+                              <Input
+                                placeholder="https://example.com/icon.svg"
+                                value={containerIcon}
+                                onChange={(e) => setContainerIcon(e.target.value)}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                URL to icon image for desktop shortcut (SVG, PNG, etc.)
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
