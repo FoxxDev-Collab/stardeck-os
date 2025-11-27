@@ -29,6 +29,8 @@ interface ContainerApp {
   container_id: string;
   name: string;
   icon: string;
+  icon_light?: string;
+  icon_dark?: string;
   status: string;
   web_ui_port: number;
   web_ui_path: string;
@@ -331,6 +333,8 @@ export default function DashboardPage() {
                 containerId={app.container_id}
                 name={app.name}
                 icon={app.icon}
+                iconLight={app.icon_light}
+                iconDark={app.icon_dark}
                 status={app.status}
               />
             ))}

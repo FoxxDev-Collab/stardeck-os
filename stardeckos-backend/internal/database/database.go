@@ -421,4 +421,11 @@ var migrations = []migration{
 			CREATE UNIQUE INDEX idx_container_env_container_key ON container_env_vars(container_id, key);
 		`,
 	},
+	{
+		name: "018_add_container_themed_icons",
+		up: `
+			ALTER TABLE containers ADD COLUMN icon_light TEXT;
+			ALTER TABLE containers ADD COLUMN icon_dark TEXT;
+		`,
+	},
 }

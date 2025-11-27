@@ -32,12 +32,12 @@ func (r *ContainerRepo) Create(c *models.Container) error {
 	_, err := r.db.Exec(`
 		INSERT INTO containers (
 			id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		c.ID, c.ContainerID, c.Name, c.Image, c.Status, c.ComposeFile, c.ComposePath,
-		c.HasWebUI, c.WebUIPort, c.WebUIPath, c.Icon, c.AutoStart,
+		c.HasWebUI, c.WebUIPort, c.WebUIPath, c.Icon, c.IconLight, c.IconDark, c.AutoStart,
 		c.CreatedAt, c.UpdatedAt, c.CreatedBy, c.Labels, c.Metadata,
 	)
 	return err
@@ -49,12 +49,12 @@ func (r *ContainerRepo) GetByID(id string) (*models.Container, error) {
 	var hasWebUI, autoStart int
 	err := r.db.QueryRow(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE id = ?
 	`, id).Scan(
 		&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 		&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 	)
 	if err != nil {
@@ -71,12 +71,12 @@ func (r *ContainerRepo) GetByContainerID(containerID string) (*models.Container,
 	var hasWebUI, autoStart int
 	err := r.db.QueryRow(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE container_id = ?
 	`, containerID).Scan(
 		&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 		&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 	)
 	if err != nil {
@@ -104,7 +104,7 @@ func (r *ContainerRepo) GetByContainerIDs(containerIDs []string) (map[string]*mo
 
 	query := `
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE container_id IN (` + strings.Join(placeholders, ",") + `)`
 
@@ -120,7 +120,7 @@ func (r *ContainerRepo) GetByContainerIDs(containerIDs []string) (map[string]*mo
 		var hasWebUI, autoStart int
 		err := rows.Scan(
 			&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 			&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 		)
 		if err != nil {
@@ -140,12 +140,12 @@ func (r *ContainerRepo) GetByName(name string) (*models.Container, error) {
 	var hasWebUI, autoStart int
 	err := r.db.QueryRow(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE name = ?
 	`, name).Scan(
 		&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+		&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 		&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 	)
 	if err != nil {
@@ -160,7 +160,7 @@ func (r *ContainerRepo) GetByName(name string) (*models.Container, error) {
 func (r *ContainerRepo) List() ([]models.Container, error) {
 	rows, err := r.db.Query(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers ORDER BY created_at DESC
 	`)
@@ -175,7 +175,7 @@ func (r *ContainerRepo) List() ([]models.Container, error) {
 		var hasWebUI, autoStart int
 		if err := rows.Scan(
 			&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 			&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 		); err != nil {
 			return nil, err
@@ -196,14 +196,14 @@ func (r *ContainerRepo) Update(c *models.Container) error {
 			container_id = ?, name = ?, image = ?, status = ?,
 			compose_file = ?, compose_path = ?,
 			has_web_ui = ?, web_ui_port = ?, web_ui_path = ?,
-			icon = ?, auto_start = ?, updated_at = ?,
+			icon = ?, icon_light = ?, icon_dark = ?, auto_start = ?, updated_at = ?,
 			labels = ?, metadata = ?
 		WHERE id = ?
 	`,
 		c.ContainerID, c.Name, c.Image, c.Status,
 		c.ComposeFile, c.ComposePath,
 		c.HasWebUI, c.WebUIPort, c.WebUIPath,
-		c.Icon, c.AutoStart, c.UpdatedAt,
+		c.Icon, c.IconLight, c.IconDark, c.AutoStart, c.UpdatedAt,
 		c.Labels, c.Metadata, c.ID,
 	)
 	return err
@@ -233,7 +233,7 @@ func (r *ContainerRepo) DeleteByContainerID(containerID string) error {
 func (r *ContainerRepo) ListWithWebUI() ([]models.Container, error) {
 	rows, err := r.db.Query(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE has_web_ui = 1 ORDER BY name
 	`)
@@ -248,7 +248,7 @@ func (r *ContainerRepo) ListWithWebUI() ([]models.Container, error) {
 		var hasWebUI, autoStart int
 		if err := rows.Scan(
 			&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 			&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 		); err != nil {
 			return nil, err
@@ -265,7 +265,7 @@ func (r *ContainerRepo) ListWithWebUI() ([]models.Container, error) {
 func (r *ContainerRepo) ListAutoStart() ([]models.Container, error) {
 	rows, err := r.db.Query(`
 		SELECT id, container_id, name, image, status, compose_file, compose_path,
-			has_web_ui, web_ui_port, web_ui_path, icon, auto_start,
+			has_web_ui, web_ui_port, web_ui_path, icon, icon_light, icon_dark, auto_start,
 			created_at, updated_at, created_by, labels, metadata
 		FROM containers WHERE auto_start = 1 ORDER BY name
 	`)
@@ -280,7 +280,7 @@ func (r *ContainerRepo) ListAutoStart() ([]models.Container, error) {
 		var hasWebUI, autoStart int
 		if err := rows.Scan(
 			&c.ID, &c.ContainerID, &c.Name, &c.Image, &c.Status, &c.ComposeFile, &c.ComposePath,
-			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &autoStart,
+			&hasWebUI, &c.WebUIPort, &c.WebUIPath, &c.Icon, &c.IconLight, &c.IconDark, &autoStart,
 			&c.CreatedAt, &c.UpdatedAt, &c.CreatedBy, &c.Labels, &c.Metadata,
 		); err != nil {
 			return nil, err

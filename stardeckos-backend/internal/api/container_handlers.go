@@ -210,6 +210,8 @@ func listContainersHandler(c echo.Context) error {
 				containers[i].ID = dbContainer.ID
 				containers[i].HasWebUI = dbContainer.HasWebUI
 				containers[i].Icon = dbContainer.Icon
+				containers[i].IconLight = dbContainer.IconLight
+				containers[i].IconDark = dbContainer.IconDark
 				containers[i].CreatedAt = dbContainer.CreatedAt
 			}
 		}
@@ -281,6 +283,8 @@ func getContainerHandler(c echo.Context) error {
 		response["web_ui_port"] = dbContainer.WebUIPort
 		response["web_ui_path"] = dbContainer.WebUIPath
 		response["icon"] = dbContainer.Icon
+		response["icon_light"] = dbContainer.IconLight
+		response["icon_dark"] = dbContainer.IconDark
 		response["auto_start"] = dbContainer.AutoStart
 		response["stardeck_created_at"] = dbContainer.CreatedAt
 	}
@@ -591,6 +595,8 @@ func deployContainerHandler(c echo.Context) error {
 		WebUIPort:   req.WebUIPort,
 		WebUIPath:   req.WebUIPath,
 		Icon:        req.Icon,
+		IconLight:   req.IconLight,
+		IconDark:    req.IconDark,
 		AutoStart:   req.AutoStart,
 		CreatedBy:   &user.ID,
 	}
@@ -663,6 +669,8 @@ func createContainerHandler(c echo.Context) error {
 		WebUIPort:   req.WebUIPort,
 		WebUIPath:   req.WebUIPath,
 		Icon:        req.Icon,
+		IconLight:   req.IconLight,
+		IconDark:    req.IconDark,
 		AutoStart:   req.AutoStart,
 		CreatedBy:   &user.ID,
 	}
@@ -873,6 +881,8 @@ func adoptContainerHandler(c echo.Context) error {
 		WebUIPort:   req.WebUIPort,
 		WebUIPath:   webUIPath,
 		Icon:        req.Icon,
+		IconLight:   req.IconLight,
+		IconDark:    req.IconDark,
 		AutoStart:   req.AutoStart,
 		CreatedBy:   &userID,
 	}
@@ -937,6 +947,12 @@ func updateContainerHandler(c echo.Context) error {
 	}
 	if req.Icon != nil {
 		dbContainer.Icon = *req.Icon
+	}
+	if req.IconLight != nil {
+		dbContainer.IconLight = *req.IconLight
+	}
+	if req.IconDark != nil {
+		dbContainer.IconDark = *req.IconDark
 	}
 	if req.AutoStart != nil {
 		dbContainer.AutoStart = *req.AutoStart
@@ -1809,6 +1825,8 @@ func listDesktopAppsHandler(c echo.Context) error {
 			"container_id": c.ContainerID,
 			"name":         c.Name,
 			"icon":         c.Icon,
+			"icon_light":   c.IconLight,
+			"icon_dark":    c.IconDark,
 			"status":       status,
 			"web_ui_port":  c.WebUIPort,
 			"web_ui_path":  c.WebUIPath,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Box } from "lucide-react";
 
@@ -8,6 +8,8 @@ interface ContainerAppIconProps {
   containerId: string;
   name: string;
   icon?: string;
+  iconLight?: string;
+  iconDark?: string;
   status: string;
 }
 
@@ -15,12 +17,36 @@ export function ContainerAppIcon({
   containerId,
   name,
   icon,
+  iconLight,
+  iconDark,
   status,
 }: ContainerAppIconProps) {
   const router = useRouter();
   const [isSelected, setIsSelected] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
 
   const isRunning = status === "running";
+
+  // Detect dark mode from document class
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDarkTheme(document.documentElement.classList.contains("dark"));
+    };
+
+    checkDarkMode();
+
+    // Watch for dark mode changes
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+    return () => observer.disconnect();
+  }, []);
+
+  // Determine which icon to use based on theme
+  // Priority: themed icon > legacy icon > none
+  const displayIcon = isDarkTheme
+    ? (iconDark || icon)
+    : (iconLight || icon);
 
   const handleClick = () => {
     setIsSelected(true);
@@ -83,9 +109,9 @@ export function ContainerAppIcon({
 
         {/* Icon */}
         <div className={`transition-all duration-200 ${isSelected ? "text-cyan-400 scale-110" : "text-cyan-400/70 group-hover:text-cyan-400 group-hover:scale-110"}`}>
-          {icon ? (
+          {displayIcon ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={icon} alt={name} className="w-8 h-8 object-contain" />
+            <img src={displayIcon} alt={name} className="w-8 h-8 object-contain" />
           ) : (
             <Box className="w-8 h-8" />
           )}

@@ -32,7 +32,6 @@ import {
   Box,
   Play,
   Square,
-  RotateCw,
   Trash2,
   Plus,
   Search,
@@ -44,13 +43,9 @@ import {
   HardDrive,
   Network,
   Download,
-  FileText,
-  Activity,
   Clock,
   Cpu,
   MemoryStick,
-  Globe,
-  Terminal,
   Package,
   Layers,
   Settings,
@@ -58,6 +53,7 @@ import {
   ShieldAlert,
   Pencil,
   FileCode2,
+  ExternalLink,
 } from "lucide-react";
 
 interface Container {
@@ -218,6 +214,8 @@ export default function ContainerManagerPage() {
     webUIPort: "",
     webUIPath: "/",
     icon: "",
+    iconLight: "",
+    iconDark: "",
     autoStart: false,
   });
   const [isEditing, setIsEditing] = useState(false);
@@ -615,6 +613,8 @@ export default function ContainerManagerPage() {
         webUIPort: data.web_ui_port ? String(data.web_ui_port) : "",
         webUIPath: data.web_ui_path || "/",
         icon: data.icon || "",
+        iconLight: data.icon_light || "",
+        iconDark: data.icon_dark || "",
         autoStart: data.auto_start || false,
       });
       setShowEditDialog(true);
@@ -640,6 +640,8 @@ export default function ContainerManagerPage() {
           web_ui_port: editForm.hasWebUI ? parseInt(editForm.webUIPort) || 0 : 0,
           web_ui_path: editForm.webUIPath || "/",
           icon: editForm.icon,
+          icon_light: editForm.iconLight,
+          icon_dark: editForm.iconDark,
           auto_start: editForm.autoStart,
         }),
       });
@@ -1189,8 +1191,9 @@ export default function ContainerManagerPage() {
                             </td>
                             <td className="p-4">
                               <div className="flex gap-1">
-                                {container.status === "running" ? (
-                                  <>
+                                {/* Start/Stop - Admin only */}
+                                {isAdmin && (
+                                  container.status === "running" ? (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1204,109 +1207,53 @@ export default function ContainerManagerPage() {
                                         <Square className="w-4 h-4" />
                                       )}
                                     </Button>
+                                  ) : (
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => handleContainerAction(container.container_id, "restart")}
+                                      onClick={() => handleContainerAction(container.container_id, "start")}
                                       disabled={actionInProgress === container.container_id}
-                                      title="Restart"
+                                      title="Start"
                                     >
-                                      <RotateCw className="w-4 h-4" />
+                                      {actionInProgress === container.container_id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Play className="w-4 h-4" />
+                                      )}
                                     </Button>
-                                  </>
-                                ) : (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleContainerAction(container.container_id, "start")}
-                                    disabled={actionInProgress === container.container_id}
-                                    title="Start"
-                                  >
-                                    {actionInProgress === container.container_id ? (
-                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <Play className="w-4 h-4" />
-                                    )}
-                                  </Button>
+                                  )
                                 )}
+                                {/* View Details - Always visible */}
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => viewLogs(container)}
-                                  title="View Logs"
+                                  onClick={() => router.push(`/container-details?id=${container.id || container.container_id}`)}
+                                  title="View Details"
+                                  className="text-cyan-400 hover:text-cyan-400"
                                 >
-                                  <FileText className="w-4 h-4" />
+                                  <ExternalLink className="w-4 h-4" />
                                 </Button>
-                                {isAdmin && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => router.push(`/container-create?edit=${container.container_id}`)}
-                                    title="Edit Container"
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                  </Button>
-                                )}
-                                {container.status === "running" && (
-                                  <>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => viewStats(container)}
-                                      title="View Stats"
-                                    >
-                                      <Activity className="w-4 h-4" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => openTerminal(container)}
-                                      title="Open Terminal"
-                                    >
-                                      <Terminal className="w-4 h-4" />
-                                    </Button>
-                                  </>
-                                )}
-                                {container.has_web_ui && container.status === "running" && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => window.open(`/api/containers/${container.container_id}/proxy/`, "_blank")}
-                                    title="Open Web UI"
-                                  >
-                                    <Globe className="w-4 h-4" />
-                                  </Button>
-                                )}
+                                {/* Adopt unmanaged containers - Admin only */}
                                 {isAdmin && !isManaged(container) && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => openAdoptDialog(container)}
-                                    title="Adopt Container (configure for Stardeck)"
-                                    className="text-cyan-400 hover:text-cyan-400"
+                                    title="Adopt Container"
+                                    className="text-amber-400 hover:text-amber-400"
                                   >
                                     <Package className="w-4 h-4" />
                                   </Button>
                                 )}
-                                {isAdmin && isManaged(container) && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => openEditDialog(container)}
-                                    title="Edit Container Settings"
-                                    className="text-amber-400 hover:text-amber-400"
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                  </Button>
-                                )}
+                                {/* Delete - Admin only */}
                                 {isAdmin && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleContainerAction(container.container_id, "remove")}
-                                    disabled={actionInProgress === container.container_id}
+                                    disabled={actionInProgress === container.container_id || container.status === "running"}
                                     className="text-destructive hover:text-destructive"
-                                    title="Remove"
+                                    title={container.status === "running" ? "Stop container first" : "Remove"}
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </Button>
@@ -2065,30 +2012,55 @@ export default function ContainerManagerPage() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {/* Icon URL */}
-            <div className="space-y-2">
-              <Label htmlFor="edit-icon">Icon URL</Label>
-              <Input
-                id="edit-icon"
-                placeholder="https://example.com/icon.svg"
-                value={editForm.icon}
-                onChange={(e) => setEditForm(prev => ({ ...prev, icon: e.target.value }))}
-              />
+            {/* Icon URLs for Light/Dark themes */}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="edit-icon-light">Icon URL (Light Theme)</Label>
+                <Input
+                  id="edit-icon-light"
+                  placeholder="https://cdn.jsdelivr.net/gh/selfhst/icons/svg/app-light.svg"
+                  value={editForm.iconLight}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, iconLight: e.target.value }))}
+                />
+                {editForm.iconLight && (
+                  <div className="flex items-center gap-2 p-2 bg-white border rounded">
+                    <span className="text-xs text-gray-500">Preview:</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={editForm.iconLight}
+                      alt="Light icon preview"
+                      className="w-8 h-8 object-contain"
+                      onError={(e) => (e.currentTarget.style.display = "none")}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-icon-dark">Icon URL (Dark Theme)</Label>
+                <Input
+                  id="edit-icon-dark"
+                  placeholder="https://cdn.jsdelivr.net/gh/selfhst/icons/svg/app-dark.svg"
+                  value={editForm.iconDark}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, iconDark: e.target.value }))}
+                />
+                {editForm.iconDark && (
+                  <div className="flex items-center gap-2 p-2 bg-gray-900 border border-gray-700 rounded">
+                    <span className="text-xs text-gray-400">Preview:</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={editForm.iconDark}
+                      alt="Dark icon preview"
+                      className="w-8 h-8 object-contain"
+                      onError={(e) => (e.currentTarget.style.display = "none")}
+                    />
+                  </div>
+                )}
+              </div>
+
               <p className="text-xs text-muted-foreground">
-                URL to an icon image (SVG, PNG, etc.) for the desktop shortcut
+                Icon URLs from selfh.st/icons or other sources. Light theme icons display on light backgrounds, dark theme icons on dark backgrounds.
               </p>
-              {editForm.icon && (
-                <div className="flex items-center gap-2 p-2 bg-muted/50 rounded">
-                  <span className="text-xs text-muted-foreground">Preview:</span>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={editForm.icon}
-                    alt="Icon preview"
-                    className="w-8 h-8 object-contain"
-                    onError={(e) => (e.currentTarget.style.display = "none")}
-                  />
-                </div>
-              )}
             </div>
 
             {/* Has Web UI */}

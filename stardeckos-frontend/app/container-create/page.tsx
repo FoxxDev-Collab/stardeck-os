@@ -169,7 +169,9 @@ function ContainerCreateContent() {
   const [webUIPort, setWebUIPort] = useState("");
   const [webUIPath, setWebUIPath] = useState("/");
   const [containerIcon, setContainerIcon] = useState("");
-  
+  const [iconLight, setIconLight] = useState("");
+  const [iconDark, setIconDark] = useState("");
+
   // UI state
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -602,6 +604,8 @@ function ContainerCreateContent() {
       web_ui_port: hasWebUI && webUIPort ? parseInt(webUIPort) : undefined,
       web_ui_path: hasWebUI ? webUIPath || "/" : undefined,
       icon: containerIcon || undefined,
+      icon_light: iconLight || undefined,
+      icon_dark: iconDark || undefined,
     };
   };
 
@@ -1193,16 +1197,29 @@ function ContainerCreateContent() {
                               </div>
                             </div>
 
-                            <div className="space-y-2">
-                              <Label>Icon URL</Label>
-                              <Input
-                                placeholder="https://example.com/icon.svg"
-                                value={containerIcon}
-                                onChange={(e) => setContainerIcon(e.target.value)}
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                URL to icon image for desktop shortcut (SVG, PNG, etc.)
-                              </p>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label>Icon URL (Light Theme)</Label>
+                                <Input
+                                  placeholder="https://example.com/icon-light.svg"
+                                  value={iconLight}
+                                  onChange={(e) => setIconLight(e.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  Icon for light backgrounds
+                                </p>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Icon URL (Dark Theme)</Label>
+                                <Input
+                                  placeholder="https://example.com/icon-dark.svg"
+                                  value={iconDark}
+                                  onChange={(e) => setIconDark(e.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  Icon for dark backgrounds
+                                </p>
+                              </div>
                             </div>
                           </>
                         )}

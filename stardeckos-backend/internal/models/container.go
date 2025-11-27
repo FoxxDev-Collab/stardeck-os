@@ -28,7 +28,9 @@ type Container struct {
 	HasWebUI     bool            `json:"has_web_ui"`    // Whether container has a web UI
 	WebUIPort    int             `json:"web_ui_port"`   // Internal port for web UI
 	WebUIPath    string          `json:"web_ui_path"`   // Path prefix for web UI (e.g., "/", "/admin")
-	Icon         string          `json:"icon"`          // Icon identifier or path
+	Icon         string          `json:"icon"`          // Icon URL (legacy, use IconLight/IconDark)
+	IconLight    string          `json:"icon_light"`    // Icon URL for light theme
+	IconDark     string          `json:"icon_dark"`     // Icon URL for dark theme
 	AutoStart    bool            `json:"auto_start"`    // Start on system boot
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
@@ -46,6 +48,8 @@ type ContainerListItem struct {
 	Status      ContainerStatus `json:"status"`
 	HasWebUI    bool            `json:"has_web_ui"`
 	Icon        string          `json:"icon"`
+	IconLight   string          `json:"icon_light"`
+	IconDark    string          `json:"icon_dark"`
 	CreatedAt   time.Time       `json:"created_at"`
 	Uptime      string          `json:"uptime,omitempty"`
 	Ports       []PortMapping   `json:"ports,omitempty"`
@@ -108,6 +112,8 @@ type CreateContainerRequest struct {
 	WebUIPort    int               `json:"web_ui_port,omitempty"`
 	WebUIPath    string            `json:"web_ui_path,omitempty"`
 	Icon         string            `json:"icon,omitempty"`
+	IconLight    string            `json:"icon_light,omitempty"`
+	IconDark     string            `json:"icon_dark,omitempty"`
 	AutoStart    bool              `json:"auto_start"`
 	CPULimit     float64           `json:"cpu_limit,omitempty"`     // CPU cores limit
 	MemoryLimit  int64             `json:"memory_limit,omitempty"`  // Memory limit in bytes
@@ -126,6 +132,8 @@ type UpdateContainerRequest struct {
 	WebUIPort  *int              `json:"web_ui_port,omitempty"`
 	WebUIPath  *string           `json:"web_ui_path,omitempty"`
 	Icon       *string           `json:"icon,omitempty"`
+	IconLight  *string           `json:"icon_light,omitempty"`
+	IconDark   *string           `json:"icon_dark,omitempty"`
 	AutoStart  *bool             `json:"auto_start,omitempty"`
 	Labels     map[string]string `json:"labels,omitempty"`
 }
@@ -136,7 +144,9 @@ type AdoptContainerRequest struct {
 	HasWebUI    bool   `json:"has_web_ui"`
 	WebUIPort   int    `json:"web_ui_port,omitempty"`  // Host port for web UI
 	WebUIPath   string `json:"web_ui_path,omitempty"`  // Path prefix (default: "/")
-	Icon        string `json:"icon,omitempty"`         // Icon name for desktop
+	Icon        string `json:"icon,omitempty"`         // Icon URL (legacy)
+	IconLight   string `json:"icon_light,omitempty"`   // Icon URL for light theme
+	IconDark    string `json:"icon_dark,omitempty"`    // Icon URL for dark theme
 	AutoStart   bool   `json:"auto_start,omitempty"`   // Auto-start on boot
 }
 
