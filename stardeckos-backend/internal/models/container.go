@@ -341,6 +341,78 @@ type UpdateStackRequest struct {
 	EnvContent     *string `json:"env_content,omitempty"`
 }
 
+// ContainerBackup represents a backup of container volumes before an update
+type ContainerBackup struct {
+	ID            string            `json:"id"`
+	ContainerID   string            `json:"container_id"`
+	ContainerName string            `json:"container_name"`
+	Image         string            `json:"image"`         // Image at time of backup
+	BackupPath    string            `json:"backup_path"`   // Path where backup is stored
+	BackupType    string            `json:"backup_type"`   // "bind" or "volume"
+	Mounts        []BackupMount     `json:"mounts"`        // What was backed up
+	SizeBytes     int64             `json:"size_bytes"`    // Total backup size
+	CreatedAt     time.Time         `json:"created_at"`
+	CreatedBy     *int64            `json:"created_by,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"` // Additional info
+}
+
+// BackupMount represents a single mount that was backed up
+type BackupMount struct {
+	Source      string `json:"source"`       // Original source path/volume
+	Target      string `json:"target"`       // Container mount point
+	BackupPath  string `json:"backup_path"`  // Where this mount is backed up
+	Type        string `json:"type"`         // bind, volume
+	SizeBytes   int64  `json:"size_bytes"`
+}
+
+// UpdateContainerImageRequest represents a request to update a container's image
+type UpdateContainerImageRequest struct {
+	ContainerID     string `json:"container_id" validate:"required"`
+	NewImage        string `json:"new_image,omitempty"`        // New image (defaults to same image:latest)
+	CreateBackup    bool   `json:"create_backup"`              // Whether to backup volumes before update
+	BackupPath      string `json:"backup_path,omitempty"`      // Where to store backup (default: ~/.stardeck/backups)
+	OverwriteBackup bool   `json:"overwrite_backup"`           // Overwrite existing backup if present
+	StopTimeout     int    `json:"stop_timeout,omitempty"`     // Timeout for stopping container (default: 30)
+	RemoveOld       bool   `json:"remove_old"`                 // Remove old container after successful update
+}
+
+// ContainerUpdateProgress represents progress during container update
+type ContainerUpdateProgress struct {
+	Step       string `json:"step"`
+	Message    string `json:"message"`
+	Progress   int    `json:"progress,omitempty"`   // 0-100
+	IsError    bool   `json:"error,omitempty"`
+	Complete   bool   `json:"complete,omitempty"`
+	Details    map[string]interface{} `json:"details,omitempty"`
+}
+
+// ContainerConfig holds the full configuration needed to recreate a container
+type ContainerConfig struct {
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Ports         []PortMapping     `json:"ports"`
+	Volumes       []VolumeMount     `json:"volumes"`
+	Environment   map[string]string `json:"environment"`
+	Labels        map[string]string `json:"labels"`
+	RestartPolicy string            `json:"restart_policy"`
+	NetworkMode   string            `json:"network_mode"`
+	Hostname      string            `json:"hostname"`
+	User          string            `json:"user"`
+	WorkDir       string            `json:"workdir"`
+	Entrypoint    []string          `json:"entrypoint"`
+	Command       []string          `json:"command"`
+	CPULimit      float64           `json:"cpu_limit"`
+	MemoryLimit   int64             `json:"memory_limit"`
+	// Stardeck metadata
+	HasWebUI   bool   `json:"has_web_ui"`
+	WebUIPort  int    `json:"web_ui_port"`
+	WebUIPath  string `json:"web_ui_path"`
+	Icon       string `json:"icon"`
+	IconLight  string `json:"icon_light"`
+	IconDark   string `json:"icon_dark"`
+	AutoStart  bool   `json:"auto_start"`
+}
+
 // Audit action constants for containers
 const (
 	ActionContainerCreate  = "container.create"
@@ -349,6 +421,8 @@ const (
 	ActionContainerRestart = "container.restart"
 	ActionContainerRemove  = "container.remove"
 	ActionContainerUpdate  = "container.update"
+	ActionContainerBackup  = "container.backup"
+	ActionContainerRestore = "container.restore"
 	ActionImagePull        = "image.pull"
 	ActionImageRemove      = "image.remove"
 	ActionTemplateCreate   = "template.create"

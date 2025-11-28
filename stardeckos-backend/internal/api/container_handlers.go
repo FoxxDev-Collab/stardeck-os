@@ -974,6 +974,119 @@ func updateContainerHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, dbContainer)
 }
 
+// getContainerLogsRESTHandler returns container logs as JSON (REST endpoint)
+func getContainerLogsRESTHandler(c echo.Context) error {
+	id := c.Param("id")
+	tail := c.QueryParam("tail")
+	if tail == "" {
+		tail = "100"
+	}
+	timestamps := c.QueryParam("timestamps") == "true"
+
+	containerID := resolveContainerID(id)
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
+	defer cancel()
+
+	logs, err := podmanService.GetLogs(ctx, containerID, tail, timestamps)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to get logs: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"logs": logs,
+	})
+}
+
+// execContainerHandler provides a WebSocket terminal to a container
+func execContainerHandler(c echo.Context) error {
+	id := c.Param("id")
+	containerID := resolveContainerID(id)
+
+	// Upgrade to WebSocket
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+
+	// Create context that cancels when WebSocket closes
+	ctx, cancel := context.WithCancel(c.Request().Context())
+	defer cancel()
+
+	// Start exec session
+	stdin, stdout, err := podmanService.ExecInteractive(ctx, containerID)
+	if err != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"type":    "error",
+			"message": "Failed to start exec session: " + err.Error(),
+		})
+		return nil
+	}
+	defer stdin.Close()
+	defer stdout.Close()
+
+	// Read from container stdout and send to WebSocket
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdout.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					ws.WriteJSON(map[string]interface{}{
+						"type":    "error",
+						"message": "Read error: " + err.Error(),
+					})
+				}
+				cancel()
+				return
+			}
+			if n > 0 {
+				ws.WriteJSON(map[string]interface{}{
+					"type": "output",
+					"data": string(buf[:n]),
+				})
+			}
+		}
+	}()
+
+	// Read from WebSocket and send to container stdin
+	for {
+		_, message, err := ws.ReadMessage()
+		if err != nil {
+			cancel()
+			return nil
+		}
+
+		var msg struct {
+			Type  string `json:"type"`
+			Data  string `json:"data"`
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(message, &msg); err != nil {
+			continue
+		}
+
+		switch msg.Type {
+		case "auth":
+			// Auth is handled by middleware, just acknowledge
+			ws.WriteJSON(map[string]interface{}{
+				"type":    "auth",
+				"success": true,
+			})
+		case "input":
+			if stdin != nil {
+				stdin.Write([]byte(msg.Data))
+			}
+		}
+	}
+}
+
 // getContainerLogsHandler streams container logs via WebSocket
 func getContainerLogsHandler(c echo.Context) error {
 	id := c.Param("id")
@@ -1022,6 +1135,40 @@ func getContainerLogsHandler(c echo.Context) error {
 	}
 
 	return nil
+}
+
+// inspectContainerHandler returns detailed container inspection data from podman
+func inspectContainerHandler(c echo.Context) error {
+	id := c.Param("id")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 30*time.Second)
+	defer cancel()
+
+	containerID := resolveContainerID(id)
+
+	inspect, err := podmanService.InspectContainer(ctx, containerID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to inspect container: " + err.Error(),
+		})
+	}
+
+	// Get container size info (this can be slow, so we try but don't fail if it errors)
+	sizeRw, sizeRootFs := podmanService.GetContainerSize(ctx, containerID)
+
+	// Build response with size info
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"Id":              inspect.ID,
+		"Created":         inspect.Created,
+		"State":           inspect.State,
+		"Image":           inspect.Config.Image,
+		"Name":            inspect.Name,
+		"Config":          inspect.Config,
+		"HostConfig":      inspect.HostConfig,
+		"NetworkSettings": inspect.NetworkSettings,
+		"Mounts":          inspect.Mounts,
+		"SizeRw":          sizeRw,
+		"SizeRootFs":      sizeRootFs,
+	})
 }
 
 // getContainerStatsHandler returns real-time stats
@@ -2111,5 +2258,449 @@ func updateStorageConfigHandler(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{
 		"status":  "updated",
 		"message": "Storage configuration updated. Podman will use the new location for volumes.",
+	})
+}
+
+// ============================================================================
+// Container Update Handlers
+// ============================================================================
+
+// getContainerConfigHandler returns the full configuration of a container
+func getContainerConfigHandler(c echo.Context) error {
+	id := c.Param("id")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	containerID := resolveContainerID(id)
+
+	config, err := podmanService.GetContainerConfig(ctx, containerID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to get container config: " + err.Error(),
+		})
+	}
+
+	// Enrich with database metadata
+	if dbContainer, err := containerRepo.GetByContainerID(containerID); err == nil {
+		config.HasWebUI = dbContainer.HasWebUI
+		config.WebUIPort = dbContainer.WebUIPort
+		config.WebUIPath = dbContainer.WebUIPath
+		config.Icon = dbContainer.Icon
+		config.IconLight = dbContainer.IconLight
+		config.IconDark = dbContainer.IconDark
+		config.AutoStart = dbContainer.AutoStart
+	}
+
+	return c.JSON(http.StatusOK, config)
+}
+
+// listContainerBackupsHandler lists backups for a container
+func listContainerBackupsHandler(c echo.Context) error {
+	id := c.Param("id")
+	containerID := resolveContainerID(id)
+
+	// Get container name
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	inspect, err := podmanService.InspectContainer(ctx, containerID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Container not found",
+		})
+	}
+
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+
+	// Default backup path
+	backupPath := os.Getenv("STARDECK_BACKUP_PATH")
+	if backupPath == "" {
+		homeDir, _ := os.UserHomeDir()
+		backupPath = filepath.Join(homeDir, ".stardeck", "backups")
+	}
+
+	backups, err := podmanService.ListBackups(backupPath, containerName)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to list backups: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, backups)
+}
+
+// checkContainerUpdateHandler checks if an update is available for a container's image
+func checkContainerUpdateHandler(c echo.Context) error {
+	id := c.Param("id")
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Minute)
+	defer cancel()
+
+	containerID := resolveContainerID(id)
+
+	// Get current image
+	inspect, err := podmanService.InspectContainer(ctx, containerID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Container not found",
+		})
+	}
+
+	currentImage := inspect.Config.Image
+
+	// Check for updates
+	hasUpdate, localDigest, remoteDigest, err := podmanService.CheckImageUpdate(ctx, currentImage)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to check for updates: " + err.Error(),
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"has_update":    hasUpdate,
+		"current_image": currentImage,
+		"local_digest":  localDigest,
+		"remote_digest": remoteDigest,
+	})
+}
+
+// updateContainerImageHandler handles the container update workflow via WebSocket
+func updateContainerImageHandler(c echo.Context) error {
+	// Upgrade to WebSocket
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+
+	// Read the update request from WebSocket
+	_, message, err := ws.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	var req models.UpdateContainerImageRequest
+	if err := json.Unmarshal(message, &req); err != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"step":    "error",
+			"message": "Invalid request: " + err.Error(),
+			"error":   true,
+		})
+		return nil
+	}
+
+	user := c.Get("user").(*models.User)
+
+	// Helper to send status updates
+	sendStatus := func(step, message string, isError bool, progress int, details map[string]interface{}) {
+		payload := map[string]interface{}{
+			"step":     step,
+			"message":  message,
+			"error":    isError,
+			"progress": progress,
+		}
+		for k, v := range details {
+			payload[k] = v
+		}
+		ws.WriteJSON(payload)
+	}
+
+	ctx := context.Background()
+
+	// Resolve container ID
+	containerID := resolveContainerID(req.ContainerID)
+
+	// Step 1: Get current container configuration
+	sendStatus("config", "Reading container configuration...", false, 5, nil)
+
+	config, err := podmanService.GetContainerConfig(ctx, containerID)
+	if err != nil {
+		sendStatus("config", "Failed to read container config: "+err.Error(), true, 0, nil)
+		return nil
+	}
+
+	// Enrich with database metadata
+	var dbContainer *models.Container
+	if dc, err := containerRepo.GetByContainerID(containerID); err == nil {
+		dbContainer = dc
+		config.HasWebUI = dc.HasWebUI
+		config.WebUIPort = dc.WebUIPort
+		config.WebUIPath = dc.WebUIPath
+		config.Icon = dc.Icon
+		config.IconLight = dc.IconLight
+		config.IconDark = dc.IconDark
+		config.AutoStart = dc.AutoStart
+	}
+
+	// Determine new image
+	newImage := req.NewImage
+	if newImage == "" {
+		newImage = config.Image // Use same image (will pull latest)
+	}
+
+	sendStatus("config", "Configuration read successfully", false, 10, map[string]interface{}{
+		"container_name": config.Name,
+		"current_image":  config.Image,
+		"new_image":      newImage,
+		"has_volumes":    len(config.Volumes) > 0,
+	})
+
+	// Step 2: Backup volumes if requested and volumes exist
+	var backup *models.ContainerBackup
+	hasBindMounts := false
+	for _, vol := range config.Volumes {
+		if vol.Type == "bind" {
+			hasBindMounts = true
+			break
+		}
+	}
+
+	if req.CreateBackup && hasBindMounts {
+		sendStatus("backup", "Creating backup of bind mounts...", false, 15, nil)
+
+		// Determine backup path
+		backupPath := req.BackupPath
+		if backupPath == "" {
+			backupPath = os.Getenv("STARDECK_BACKUP_PATH")
+			if backupPath == "" {
+				homeDir, _ := os.UserHomeDir()
+				backupPath = filepath.Join(homeDir, ".stardeck", "backups")
+			}
+		}
+
+		// Create backup directory
+		if err := os.MkdirAll(backupPath, 0755); err != nil {
+			sendStatus("backup", "Failed to create backup directory: "+err.Error(), true, 0, nil)
+			return nil
+		}
+
+		// Create progress channel for backup
+		progressChan := make(chan string, 10)
+		backupDone := make(chan error, 1)
+
+		go func() {
+			var backupErr error
+			backup, backupErr = podmanService.BackupBindMounts(ctx, containerID, backupPath, req.OverwriteBackup, progressChan)
+			close(progressChan)
+			backupDone <- backupErr
+		}()
+
+		// Stream backup progress
+		for msg := range progressChan {
+			sendStatus("backup", msg, false, 20, nil)
+		}
+
+		if err := <-backupDone; err != nil {
+			sendStatus("backup", "Backup failed: "+err.Error(), true, 0, nil)
+			return nil
+		}
+
+		sendStatus("backup", fmt.Sprintf("Backup created: %s (%.2f MB)", backup.ID, float64(backup.SizeBytes)/(1024*1024)), false, 25, map[string]interface{}{
+			"backup_id":   backup.ID,
+			"backup_path": backup.BackupPath,
+			"backup_size": backup.SizeBytes,
+		})
+
+		logAudit(user, models.ActionContainerBackup, config.Name, map[string]interface{}{
+			"backup_id":   backup.ID,
+			"backup_path": backup.BackupPath,
+		})
+	} else if req.CreateBackup && !hasBindMounts {
+		sendStatus("backup", "No bind mounts to backup, skipping...", false, 25, nil)
+	}
+
+	// Step 3: Pull new image
+	sendStatus("pull", "Pulling new image: "+newImage, false, 30, nil)
+
+	pullChan := make(chan string, 100)
+	pullDone := make(chan error, 1)
+
+	go func() {
+		pullDone <- podmanService.PullImageWithProgress(ctx, newImage, pullChan)
+	}()
+
+	for line := range pullChan {
+		sendStatus("pull", line, false, 35, map[string]interface{}{"output": true})
+	}
+
+	if err := <-pullDone; err != nil {
+		sendStatus("pull", "Failed to pull image: "+err.Error(), true, 0, nil)
+		return nil
+	}
+
+	sendStatus("pull", "Image pulled successfully", false, 45, nil)
+
+	// Step 4: Stop current container
+	stopTimeout := req.StopTimeout
+	if stopTimeout == 0 {
+		stopTimeout = 30
+	}
+
+	sendStatus("stop", "Stopping current container...", false, 50, nil)
+
+	if err := podmanService.StopContainer(ctx, containerID, stopTimeout); err != nil {
+		// Container might already be stopped, that's okay
+		sendStatus("stop", "Container stopped (or was already stopped)", false, 55, nil)
+	} else {
+		sendStatus("stop", "Container stopped", false, 55, nil)
+	}
+
+	// Step 5: Rename old container
+	backupContainerName := fmt.Sprintf("%s_backup_%s", config.Name, time.Now().Format("20060102_150405"))
+	sendStatus("rename", "Renaming old container to: "+backupContainerName, false, 60, nil)
+
+	if err := podmanService.RenameContainer(ctx, containerID, backupContainerName); err != nil {
+		sendStatus("rename", "Failed to rename container: "+err.Error(), true, 0, nil)
+		return nil
+	}
+
+	sendStatus("rename", "Old container renamed", false, 65, nil)
+
+	// Step 6: Create new container with updated image
+	sendStatus("create", "Creating new container with updated image...", false, 70, nil)
+
+	createReq := &models.CreateContainerRequest{
+		Name:          config.Name,
+		Image:         newImage,
+		Ports:         config.Ports,
+		Volumes:       config.Volumes,
+		Environment:   config.Environment,
+		Labels:        config.Labels,
+		RestartPolicy: config.RestartPolicy,
+		NetworkMode:   config.NetworkMode,
+		Hostname:      config.Hostname,
+		User:          config.User,
+		WorkDir:       config.WorkDir,
+		Entrypoint:    config.Entrypoint,
+		Command:       config.Command,
+		CPULimit:      config.CPULimit,
+		MemoryLimit:   config.MemoryLimit,
+		HasWebUI:      config.HasWebUI,
+		WebUIPort:     config.WebUIPort,
+		WebUIPath:     config.WebUIPath,
+		Icon:          config.Icon,
+		IconLight:     config.IconLight,
+		IconDark:      config.IconDark,
+		AutoStart:     config.AutoStart,
+	}
+
+	newContainerID, err := podmanService.CreateContainer(ctx, createReq)
+	if err != nil {
+		// Rollback: rename the backup container back
+		sendStatus("create", "Failed to create new container, rolling back...", true, 0, nil)
+		podmanService.RenameContainer(ctx, backupContainerName, config.Name)
+		sendStatus("create", "Rollback complete. Original container restored.", true, 0, nil)
+		return nil
+	}
+
+	sendStatus("create", "New container created", false, 80, map[string]interface{}{
+		"new_container_id": newContainerID,
+	})
+
+	// Step 7: Start new container
+	sendStatus("start", "Starting new container...", false, 85, nil)
+
+	if err := podmanService.StartContainer(ctx, newContainerID); err != nil {
+		// Rollback: remove new container and rename backup back
+		sendStatus("start", "Failed to start new container, rolling back...", true, 0, nil)
+		podmanService.RemoveContainer(ctx, newContainerID, true)
+		podmanService.RenameContainer(ctx, backupContainerName, config.Name)
+		sendStatus("start", "Rollback complete. Original container restored.", true, 0, nil)
+		return nil
+	}
+
+	sendStatus("start", "New container started", false, 90, nil)
+
+	// Step 8: Update database record
+	if dbContainer != nil {
+		dbContainer.ContainerID = newContainerID
+		dbContainer.Image = newImage
+		dbContainer.Status = models.ContainerStatusRunning
+		containerRepo.Update(dbContainer)
+	}
+
+	// Step 9: Optionally remove old container
+	if req.RemoveOld {
+		sendStatus("cleanup", "Removing old container backup...", false, 95, nil)
+		if err := podmanService.RemoveContainer(ctx, backupContainerName, true); err != nil {
+			sendStatus("cleanup", "Warning: Failed to remove old container: "+err.Error(), false, 95, nil)
+		} else {
+			sendStatus("cleanup", "Old container removed", false, 97, nil)
+		}
+	} else {
+		sendStatus("cleanup", fmt.Sprintf("Old container kept as: %s", backupContainerName), false, 97, nil)
+	}
+
+	// Final success
+	sendStatus("complete", "Container updated successfully!", false, 100, map[string]interface{}{
+		"new_container_id":    newContainerID,
+		"new_image":           newImage,
+		"backup_container":    backupContainerName,
+		"backup_removed":      req.RemoveOld,
+		"volume_backup_id":    "",
+		"volume_backup_path":  "",
+		"complete":            true,
+	})
+
+	// Update details if backup was created
+	if backup != nil {
+		ws.WriteJSON(map[string]interface{}{
+			"step":              "complete",
+			"message":           "Container updated successfully!",
+			"progress":          100,
+			"complete":          true,
+			"new_container_id":  newContainerID,
+			"new_image":         newImage,
+			"backup_container":  backupContainerName,
+			"backup_removed":    req.RemoveOld,
+			"volume_backup_id":  backup.ID,
+			"volume_backup_path": backup.BackupPath,
+		})
+	}
+
+	// Audit log
+	logAudit(user, models.ActionContainerUpdate, config.Name, map[string]interface{}{
+		"old_image":        config.Image,
+		"new_image":        newImage,
+		"old_container_id": containerID,
+		"new_container_id": newContainerID,
+		"backup_created":   backup != nil,
+	})
+
+	return nil
+}
+
+// deleteContainerBackupHandler deletes a backup
+func deleteContainerBackupHandler(c echo.Context) error {
+	backupID := c.Param("backup_id")
+
+	// Default backup path
+	backupPath := os.Getenv("STARDECK_BACKUP_PATH")
+	if backupPath == "" {
+		homeDir, _ := os.UserHomeDir()
+		backupPath = filepath.Join(homeDir, ".stardeck", "backups")
+	}
+
+	// Find and delete the backup
+	fullPath := filepath.Join(backupPath, backupID)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": "Backup not found",
+		})
+	}
+
+	if err := os.RemoveAll(fullPath); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to delete backup: " + err.Error(),
+		})
+	}
+
+	user := c.Get("user").(*models.User)
+	logAudit(user, "container.backup.delete", backupID, nil)
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"status": "deleted",
 	})
 }

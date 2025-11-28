@@ -49,26 +49,29 @@ export function ContainerStatsChart({ containerId, isRunning }: ContainerStatsCh
       const response = await fetch(`/api/containers/${containerId}/stats`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      
+
       if (!response.ok) throw new Error("Failed to fetch stats");
-      
+
       const stats: ContainerStats = await response.json();
-      setPrevStats(currentStats);
-      setCurrentStats(stats);
+      // Use functional updates to avoid stale closure issues
+      setCurrentStats((prev) => {
+        setPrevStats(prev);
+        return stats;
+      });
       setError(null);
-      
+
       // Add to history
       setStatsHistory((prev) => ({
         cpu: [...prev.cpu, stats.cpu_percent].slice(-maxDataPoints),
         memory: [...prev.memory, stats.memory_percent].slice(-maxDataPoints),
       }));
-      
+
       setLoading(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch stats");
       setLoading(false);
     }
-  }, [token, containerId, isRunning, currentStats]);
+  }, [token, containerId, isRunning]); // Removed currentStats to prevent infinite loop
 
   useEffect(() => {
     if (!isRunning) {

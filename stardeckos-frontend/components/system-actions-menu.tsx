@@ -12,7 +12,9 @@ import {
   Moon,
   AlertTriangle,
   ChevronDown,
+  Settings,
 } from "lucide-react";
+import Link from "next/link";
 
 export function SystemActionsMenu() {
   const { logout, user } = useAuth();
@@ -156,6 +158,21 @@ export function SystemActionsMenu() {
               </button>
 
               {/* Divider */}
+              <div className="my-2 h-px bg-border/50" />
+
+              {/* Settings */}
+              <Link
+                href="/settings"
+                onClick={() => setIsOpen(false)}
+                className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-accent/10 transition-colors text-left group"
+              >
+                <Settings className="w-4 h-4 text-muted-foreground group-hover:text-accent" />
+                <span className="text-sm text-foreground group-hover:text-accent">
+                  Settings
+                </span>
+              </Link>
+
+              {/* Admin System Actions */}
               {user?.role === "admin" && (
                 <>
                   <div className="my-2 h-px bg-border/50" />

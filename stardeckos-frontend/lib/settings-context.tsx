@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import {
   CustomTheme,
   ParsedThemeVariables,
@@ -8,6 +8,8 @@ import {
   clearThemeVariables,
   getThemeableVariables,
 } from "./theme-parser";
+
+const API_BASE = "/api";
 
 export type TaskbarPosition = "top" | "bottom";
 export type AccentColor = "cyan" | "amber" | "green" | "purple" | "red";
@@ -150,61 +152,160 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 const STORAGE_KEY = "stardeck-settings";
 const CUSTOM_THEMES_KEY = "stardeck-custom-themes";
 
+// Helper to get auth token
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("stardeck-token");
+}
+
+// Helper to fetch preferences from API
+async function fetchPreferencesFromAPI(): Promise<{ settings?: Settings; customThemes?: CustomTheme[] } | null> {
+  const token = getAuthToken();
+  if (!token) return null;
+
+  try {
+    const response = await fetch(`${API_BASE}/user/preferences`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (data.preferences) {
+      return {
+        settings: data.preferences.settings,
+        customThemes: data.preferences.customThemes,
+      };
+    }
+    return null;
+  } catch {
+    console.warn("Failed to fetch preferences from API");
+    return null;
+  }
+}
+
+// Helper to save preferences to API
+async function savePreferencesToAPI(settings: Settings, customThemes: CustomTheme[]): Promise<boolean> {
+  const token = getAuthToken();
+  if (!token) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/user/preferences`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        preferences: {
+          settings,
+          customThemes,
+        },
+      }),
+    });
+
+    return response.ok;
+  } catch {
+    console.warn("Failed to save preferences to API");
+    return false;
+  }
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Load settings and custom themes from localStorage on mount
+  // Load settings from localStorage first, then try API
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // Ensure theme has activeCustomThemeId (migration)
-        if (parsed.theme && parsed.theme.activeCustomThemeId === undefined) {
-          parsed.theme.activeCustomThemeId = null;
+    const loadSettings = async () => {
+      // First load from localStorage for immediate availability
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          // Ensure theme has activeCustomThemeId (migration)
+          if (parsed.theme && parsed.theme.activeCustomThemeId === undefined) {
+            parsed.theme.activeCustomThemeId = null;
+          }
+          // Ensure container settings exist (migration)
+          if (!parsed.container) {
+            parsed.container = defaultSettings.container;
+          }
+          setSettings({ ...defaultSettings, ...parsed });
         }
-        // Ensure container settings exist (migration)
-        if (!parsed.container) {
-          parsed.container = defaultSettings.container;
+
+        // Load custom themes from localStorage
+        const storedThemes = localStorage.getItem(CUSTOM_THEMES_KEY);
+        if (storedThemes) {
+          const parsedThemes = JSON.parse(storedThemes);
+          setCustomThemes(parsedThemes);
         }
-        setSettings({ ...defaultSettings, ...parsed });
+      } catch (e) {
+        console.error("Failed to load settings from localStorage:", e);
       }
 
-      // Load custom themes
-      const storedThemes = localStorage.getItem(CUSTOM_THEMES_KEY);
-      if (storedThemes) {
-        const parsedThemes = JSON.parse(storedThemes);
-        setCustomThemes(parsedThemes);
+      // Then try to fetch from API (will override localStorage if available)
+      const apiPrefs = await fetchPreferencesFromAPI();
+      if (apiPrefs) {
+        if (apiPrefs.settings) {
+          setSettings((prev) => ({ ...prev, ...apiPrefs.settings }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(apiPrefs.settings));
+        }
+        if (apiPrefs.customThemes && apiPrefs.customThemes.length > 0) {
+          setCustomThemes(apiPrefs.customThemes);
+          localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(apiPrefs.customThemes));
+        }
       }
-    } catch (e) {
-      console.error("Failed to load settings:", e);
-    }
-    setIsLoaded(true);
+
+      setIsLoaded(true);
+    };
+
+    loadSettings();
   }, []);
 
-  // Save settings to localStorage on change
+  // Sync to API when settings or themes change (debounced)
+  const syncToAPI = useCallback(async (newSettings: Settings, newThemes: CustomTheme[]) => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    await savePreferencesToAPI(newSettings, newThemes);
+    setIsSyncing(false);
+  }, [isSyncing]);
+
+  // Save settings to localStorage and API on change
   useEffect(() => {
     if (isLoaded) {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+        // Sync to API (debounce by using a timeout)
+        const timeoutId = setTimeout(() => {
+          syncToAPI(settings, customThemes);
+        }, 500);
+        return () => clearTimeout(timeoutId);
       } catch (e) {
         console.error("Failed to save settings:", e);
       }
     }
-  }, [settings, isLoaded]);
+  }, [settings, isLoaded, customThemes, syncToAPI]);
 
-  // Save custom themes to localStorage on change
+  // Save custom themes to localStorage and API on change
   useEffect(() => {
     if (isLoaded) {
       try {
         localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(customThemes));
+        // Sync to API (debounce by using a timeout)
+        const timeoutId = setTimeout(() => {
+          syncToAPI(settings, customThemes);
+        }, 500);
+        return () => clearTimeout(timeoutId);
       } catch (e) {
         console.error("Failed to save custom themes:", e);
       }
     }
-  }, [customThemes, isLoaded]);
+  }, [customThemes, isLoaded, settings, syncToAPI]);
 
   // Apply theme (custom theme or accent color) to CSS variables
   useEffect(() => {

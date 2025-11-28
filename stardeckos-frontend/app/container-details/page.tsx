@@ -36,10 +36,12 @@ import {
   Trash2,
   Box,
   Info,
+  ArrowUpCircle,
 } from "lucide-react";
-import { ContainerLogs } from "../container-manager/components/container-logs";
-import { ContainerTerminal } from "../container-manager/components/container-terminal";
 import { ContainerStatsChart } from "../container-manager/components/container-stats-chart";
+import { TerminalTab } from "./components/terminal-tab";
+import { LogsTab } from "./components/logs-tab";
+import { UpdateTab } from "./components/update-tab";
 
 interface Container {
   id: string;
@@ -447,6 +449,10 @@ function ContainerDetailsContent() {
                   <FileText className="w-4 h-4" />
                   Logs
                 </TabsTrigger>
+                <TabsTrigger value="update" className="gap-2">
+                  <ArrowUpCircle className="w-4 h-4" />
+                  Update
+                </TabsTrigger>
                 <TabsTrigger value="settings" className="gap-2">
                   <Settings className="w-4 h-4" />
                   Settings
@@ -602,22 +608,30 @@ function ContainerDetailsContent() {
 
               {/* Terminal Tab */}
               {isRunning && (
-                <TabsContent value="terminal" className="h-full m-0">
-                  <div className="h-full p-4">
-                    <ContainerTerminal
-                      containerId={container.container_id}
-                      onClose={() => setActiveTab("overview")}
-                    />
-                  </div>
+                <TabsContent value="terminal" className="h-full m-0 p-4">
+                  <TerminalTab
+                    containerId={container.container_id}
+                    containerName={container.name}
+                  />
                 </TabsContent>
               )}
 
               {/* Logs Tab */}
-              <TabsContent value="logs" className="h-full m-0">
-                <div className="h-full">
-                  <ContainerLogs
+              <TabsContent value="logs" className="h-full m-0 p-4">
+                <LogsTab
+                  containerId={container.container_id}
+                  containerName={container.name}
+                />
+              </TabsContent>
+
+              {/* Update Tab */}
+              <TabsContent value="update" className="h-full m-0 p-6 overflow-auto">
+                <div className="max-w-2xl">
+                  <UpdateTab
                     containerId={container.container_id}
-                    onClose={() => setActiveTab("overview")}
+                    containerName={container.name}
+                    currentImage={container.image}
+                    hasVolumes={inspect?.Mounts && inspect.Mounts.some(m => m.Type === "bind") || false}
                   />
                 </div>
               </TabsContent>

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -386,6 +387,25 @@ func (p *PodmanService) InspectContainer(ctx context.Context, containerID string
 	return &containers[0], nil
 }
 
+// GetContainerSize returns the container's disk usage (writable layer size and total size)
+func (p *PodmanService) GetContainerSize(ctx context.Context, containerID string) (sizeRw int64, sizeRootFs int64) {
+	// Use podman inspect with size flag to get container size
+	output, err := p.podmanCmd(ctx, "inspect", containerID, "--size", "--format", "json")
+	if err != nil {
+		return 0, 0
+	}
+
+	var containers []struct {
+		SizeRw     int64 `json:"SizeRw"`
+		SizeRootFs int64 `json:"SizeRootFs"`
+	}
+	if err := json.Unmarshal(output, &containers); err != nil || len(containers) == 0 {
+		return 0, 0
+	}
+
+	return containers[0].SizeRw, containers[0].SizeRootFs
+}
+
 // CreateContainer creates a new container
 func (p *PodmanService) CreateContainer(ctx context.Context, req *models.CreateContainerRequest) (string, error) {
 	args := []string{"create", "--name", req.Name}
@@ -588,15 +608,16 @@ func (p *PodmanService) GetContainerStats(ctx context.Context, containerID strin
 		return nil, err
 	}
 
+	// Podman stats JSON uses snake_case field names
 	var stats []struct {
-		ContainerID string `json:"ContainerID"`
-		Name        string `json:"Name"`
-		CPUPerc     string `json:"CPU"`
-		MemUsage    string `json:"MemUsage"`
-		MemPerc     string `json:"Mem"`
-		NetIO       string `json:"NetIO"`
-		BlockIO     string `json:"BlockIO"`
-		PIDs        string `json:"PIDs"`
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		CPUPercent string `json:"cpu_percent"`
+		MemUsage   string `json:"mem_usage"`
+		MemPercent string `json:"mem_percent"`
+		NetIO      string `json:"net_io"`
+		BlockIO    string `json:"block_io"`
+		PIDs       string `json:"pids"`
 	}
 	if err := json.Unmarshal(output, &stats); err != nil {
 		return nil, fmt.Errorf("failed to parse stats: %w", err)
@@ -611,17 +632,17 @@ func (p *PodmanService) GetContainerStats(ctx context.Context, containerID strin
 		ContainerID: containerID,
 	}
 
-	// Parse CPU percentage (e.g., "2.5%")
-	result.CPUPercent = parsePercentage(s.CPUPerc)
+	// Parse CPU percentage (e.g., "0.83%")
+	result.CPUPercent = parsePercentage(s.CPUPercent)
 
-	// Parse memory (e.g., "100MiB / 1GiB")
+	// Parse memory (e.g., "88.65MB / 7.971GB")
 	result.MemoryUsed, result.MemoryLimit = parseMemoryUsage(s.MemUsage)
-	result.MemoryPct = parsePercentage(s.MemPerc)
+	result.MemoryPct = parsePercentage(s.MemPercent)
 
-	// Parse network I/O (e.g., "1.2kB / 3.4kB")
+	// Parse network I/O (e.g., "6.345kB / 6.338kB")
 	result.NetworkRx, result.NetworkTx = parseIOStats(s.NetIO)
 
-	// Parse block I/O
+	// Parse block I/O (e.g., "0B / 0B")
 	result.BlockRead, result.BlockWrite = parseIOStats(s.BlockIO)
 
 	// Parse PIDs
@@ -1014,6 +1035,77 @@ func (p *PodmanService) Exec(ctx context.Context, containerID string, cmd []stri
 	args = append(args, cmd...)
 
 	return p.podmanCmd(ctx, args...)
+}
+
+// GetLogs returns container logs as a slice of strings (for REST API)
+func (p *PodmanService) GetLogs(ctx context.Context, containerID string, tail string, timestamps bool) ([]string, error) {
+	args := []string{"logs"}
+	if tail != "" && tail != "all" {
+		args = append(args, "--tail", tail)
+	}
+	if timestamps {
+		args = append(args, "--timestamps")
+	}
+	args = append(args, containerID)
+
+	output, err := p.podmanCmd(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split output into lines
+	lines := strings.Split(string(output), "\n")
+	// Remove empty trailing line
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines, nil
+}
+
+// ExecInteractive starts an interactive exec session returning stdin writer and stdout reader
+func (p *PodmanService) ExecInteractive(ctx context.Context, containerID string) (io.WriteCloser, io.ReadCloser, error) {
+	args := []string{"exec", "-i", containerID, "/bin/sh", "-c", "exec /bin/bash 2>/dev/null || exec /bin/sh"}
+
+	// Build command with rootless support
+	var cmd *exec.Cmd
+	if os.Getuid() == 0 && p.targetUser != "" {
+		sudoArgs := []string{"-u", p.targetUser, "podman"}
+		sudoArgs = append(sudoArgs, args...)
+		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
+	} else {
+		cmd = exec.CommandContext(ctx, "podman", args...)
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	// Combine stdout and stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, nil, fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		stderr.Close()
+		return nil, nil, fmt.Errorf("failed to start exec: %w", err)
+	}
+
+	// Create a combined reader for stdout and stderr
+	combinedReader := io.MultiReader(stdout, stderr)
+
+	return stdin, io.NopCloser(combinedReader), nil
 }
 
 // StreamLogs streams logs to a channel (for WebSocket)
@@ -1751,4 +1843,351 @@ mountopt = "nodev,metacopy=on"
 	_, _ = p.podmanCmd(ctx, "system", "reset", "--force")
 
 	return nil
+}
+
+// ============================================================================
+// Container Update and Backup Functions
+// ============================================================================
+
+// GetContainerConfig extracts the full configuration from a running container
+// This is used to recreate the container with a new image
+func (p *PodmanService) GetContainerConfig(ctx context.Context, containerID string) (*models.ContainerConfig, error) {
+	inspect, err := p.InspectContainer(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	config := &models.ContainerConfig{
+		Name:          strings.TrimPrefix(inspect.Name, "/"),
+		Image:         inspect.Config.Image,
+		Hostname:      inspect.Config.Hostname,
+		User:          inspect.Config.User,
+		WorkDir:       inspect.Config.WorkingDir,
+		Entrypoint:    inspect.Config.Entrypoint,
+		Command:       inspect.Config.Cmd,
+		RestartPolicy: inspect.HostConfig.RestartPolicy.Name,
+		NetworkMode:   inspect.HostConfig.NetworkMode,
+		MemoryLimit:   inspect.HostConfig.Memory,
+		Labels:        make(map[string]string),
+		Environment:   make(map[string]string),
+		Ports:         make([]models.PortMapping, 0),
+		Volumes:       make([]models.VolumeMount, 0),
+	}
+
+	// Convert NanoCPUs to CPU cores
+	if inspect.HostConfig.NanoCpus > 0 {
+		config.CPULimit = float64(inspect.HostConfig.NanoCpus) / 1e9
+	}
+
+	// Parse environment variables
+	for _, env := range inspect.Config.Env {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			config.Environment[parts[0]] = parts[1]
+		}
+	}
+
+	// Copy labels (excluding internal podman labels)
+	for key, value := range inspect.Config.Labels {
+		if !strings.HasPrefix(key, "io.podman.") && !strings.HasPrefix(key, "org.opencontainers.") {
+			config.Labels[key] = value
+		}
+	}
+
+	// Extract Stardeck metadata from labels
+	if val, ok := config.Labels["stardeck.webui"]; ok && val == "true" {
+		config.HasWebUI = true
+	}
+	if val, ok := config.Labels["stardeck.webui.port"]; ok {
+		if port, err := strconv.Atoi(val); err == nil {
+			config.WebUIPort = port
+		}
+	}
+	if val, ok := config.Labels["stardeck.webui.path"]; ok {
+		config.WebUIPath = val
+	}
+	if val, ok := config.Labels["stardeck.icon"]; ok {
+		config.Icon = val
+	}
+
+	// Parse port bindings
+	for portSpec, bindings := range inspect.HostConfig.PortBindings {
+		parts := strings.Split(portSpec, "/")
+		containerPort, _ := strconv.Atoi(parts[0])
+		protocol := "tcp"
+		if len(parts) > 1 {
+			protocol = parts[1]
+		}
+
+		for _, binding := range bindings {
+			hostPort, _ := strconv.Atoi(binding.HostPort)
+			config.Ports = append(config.Ports, models.PortMapping{
+				HostIP:        binding.HostIP,
+				HostPort:      hostPort,
+				ContainerPort: containerPort,
+				Protocol:      protocol,
+			})
+		}
+	}
+
+	// Parse volume mounts
+	for _, mount := range inspect.Mounts {
+		config.Volumes = append(config.Volumes, models.VolumeMount{
+			Source:   mount.Source,
+			Target:   mount.Destination,
+			ReadOnly: !mount.RW,
+			Type:     mount.Type,
+		})
+	}
+
+	return config, nil
+}
+
+// RenameContainer renames a container
+func (p *PodmanService) RenameContainer(ctx context.Context, containerID, newName string) error {
+	_, err := p.podmanCmd(ctx, "rename", containerID, newName)
+	return err
+}
+
+// BackupBindMounts creates a backup of bind mount directories
+// Returns the backup info and any error
+func (p *PodmanService) BackupBindMounts(ctx context.Context, containerID, backupBasePath string, overwrite bool, progressChan chan<- string) (*models.ContainerBackup, error) {
+	inspect, err := p.InspectContainer(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
+	}
+
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+	timestamp := time.Now().Format("20060102-150405")
+	backupDir := fmt.Sprintf("%s/%s_%s", backupBasePath, containerName, timestamp)
+
+	// Check for existing backups if not overwriting
+	if !overwrite {
+		// Find existing backups for this container
+		entries, err := os.ReadDir(backupBasePath)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasPrefix(entry.Name(), containerName+"_") {
+					return nil, fmt.Errorf("existing backup found at %s/%s. Set overwrite_backup=true to replace it", backupBasePath, entry.Name())
+				}
+			}
+		}
+	} else {
+		// Remove existing backups for this container
+		entries, err := os.ReadDir(backupBasePath)
+		if err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasPrefix(entry.Name(), containerName+"_") {
+					oldPath := fmt.Sprintf("%s/%s", backupBasePath, entry.Name())
+					if progressChan != nil {
+						progressChan <- fmt.Sprintf("Removing existing backup: %s", entry.Name())
+					}
+					os.RemoveAll(oldPath)
+				}
+			}
+		}
+	}
+
+	// Create backup directory
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create backup directory: %w", err)
+	}
+
+	backup := &models.ContainerBackup{
+		ID:            fmt.Sprintf("%s_%s", containerName, timestamp),
+		ContainerID:   containerID,
+		ContainerName: containerName,
+		Image:         inspect.Config.Image,
+		BackupPath:    backupDir,
+		BackupType:    "bind",
+		Mounts:        make([]models.BackupMount, 0),
+		CreatedAt:     time.Now(),
+		Metadata:      make(map[string]string),
+	}
+
+	var totalSize int64
+
+	// Backup each bind mount
+	for i, mount := range inspect.Mounts {
+		if mount.Type != "bind" {
+			continue
+		}
+
+		if progressChan != nil {
+			progressChan <- fmt.Sprintf("Backing up mount %d: %s -> %s", i+1, mount.Source, mount.Destination)
+		}
+
+		// Create a subdirectory for this mount
+		mountBackupDir := fmt.Sprintf("%s/mount_%d", backupDir, i)
+		if err := os.MkdirAll(mountBackupDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create mount backup dir: %w", err)
+		}
+
+		// Use rsync or cp to copy the data
+		var copyCmd *exec.Cmd
+		sourcePath := mount.Source
+		if !strings.HasSuffix(sourcePath, "/") {
+			sourcePath += "/"
+		}
+
+		// Check if rsync is available
+		if _, err := exec.LookPath("rsync"); err == nil {
+			copyCmd = exec.CommandContext(ctx, "rsync", "-av", "--progress", sourcePath, mountBackupDir+"/")
+		} else {
+			copyCmd = exec.CommandContext(ctx, "cp", "-a", sourcePath+".", mountBackupDir+"/")
+		}
+
+		output, err := copyCmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("failed to backup mount %s: %w - %s", mount.Source, err, string(output))
+		}
+
+		// Get the size of the backup
+		var mountSize int64
+		err = filepath.Walk(mountBackupDir, func(_ string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				mountSize += info.Size()
+			}
+			return nil
+		})
+		if err != nil {
+			mountSize = 0 // Non-fatal, just can't calculate size
+		}
+
+		backup.Mounts = append(backup.Mounts, models.BackupMount{
+			Source:     mount.Source,
+			Target:     mount.Destination,
+			BackupPath: mountBackupDir,
+			Type:       mount.Type,
+			SizeBytes:  mountSize,
+		})
+		totalSize += mountSize
+	}
+
+	backup.SizeBytes = totalSize
+
+	// Save backup metadata
+	metadataPath := fmt.Sprintf("%s/backup.json", backupDir)
+	metadataJSON, _ := json.MarshalIndent(backup, "", "  ")
+	if err := os.WriteFile(metadataPath, metadataJSON, 0644); err != nil {
+		log.Printf("Warning: failed to save backup metadata: %v", err)
+	}
+
+	return backup, nil
+}
+
+// RestoreBindMounts restores bind mounts from a backup
+func (p *PodmanService) RestoreBindMounts(ctx context.Context, backup *models.ContainerBackup, progressChan chan<- string) error {
+	for i, mount := range backup.Mounts {
+		if progressChan != nil {
+			progressChan <- fmt.Sprintf("Restoring mount %d: %s", i+1, mount.Target)
+		}
+
+		sourcePath := mount.BackupPath
+		if !strings.HasSuffix(sourcePath, "/") {
+			sourcePath += "/"
+		}
+		destPath := mount.Source
+
+		// Use rsync or cp to restore
+		var copyCmd *exec.Cmd
+		if _, err := exec.LookPath("rsync"); err == nil {
+			copyCmd = exec.CommandContext(ctx, "rsync", "-av", "--delete", sourcePath, destPath+"/")
+		} else {
+			// First clear the destination, then copy
+			os.RemoveAll(destPath)
+			os.MkdirAll(destPath, 0755)
+			copyCmd = exec.CommandContext(ctx, "cp", "-a", sourcePath+".", destPath+"/")
+		}
+
+		output, err := copyCmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to restore mount %s: %w - %s", mount.Target, err, string(output))
+		}
+	}
+
+	return nil
+}
+
+// ListBackups lists all backups for a container
+func (p *PodmanService) ListBackups(backupBasePath, containerName string) ([]models.ContainerBackup, error) {
+	backups := make([]models.ContainerBackup, 0)
+
+	entries, err := os.ReadDir(backupBasePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return backups, nil
+		}
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check if this is a backup for the specified container (or all if containerName is empty)
+		if containerName != "" && !strings.HasPrefix(entry.Name(), containerName+"_") {
+			continue
+		}
+
+		// Try to read backup metadata
+		metadataPath := fmt.Sprintf("%s/%s/backup.json", backupBasePath, entry.Name())
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			continue
+		}
+
+		var backup models.ContainerBackup
+		if err := json.Unmarshal(data, &backup); err != nil {
+			continue
+		}
+
+		backups = append(backups, backup)
+	}
+
+	return backups, nil
+}
+
+// GetImageDigest returns the digest of an image
+func (p *PodmanService) GetImageDigest(ctx context.Context, image string) (string, error) {
+	normalizedImage := normalizeImageName(image)
+	output, err := p.podmanCmd(ctx, "image", "inspect", normalizedImage, "--format", "{{.Digest}}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// CheckImageUpdate checks if a newer version of the image is available
+// Returns true if an update is available, along with local and remote digests
+func (p *PodmanService) CheckImageUpdate(ctx context.Context, image string) (bool, string, string, error) {
+	normalizedImage := normalizeImageName(image)
+
+	// Get local digest
+	localDigest, err := p.GetImageDigest(ctx, normalizedImage)
+	if err != nil {
+		return false, "", "", fmt.Errorf("failed to get local image digest: %w", err)
+	}
+
+	// Pull to check for updates (this will update if newer is available)
+	// We use --quiet to suppress output
+	_, pullErr := p.podmanCmd(ctx, "pull", "--quiet", normalizedImage)
+	if pullErr != nil {
+		return false, localDigest, "", fmt.Errorf("failed to check for updates: %w", pullErr)
+	}
+
+	// Get the new digest
+	newDigest, err := p.GetImageDigest(ctx, normalizedImage)
+	if err != nil {
+		return false, localDigest, "", fmt.Errorf("failed to get new image digest: %w", err)
+	}
+
+	// Compare digests
+	hasUpdate := localDigest != newDigest
+
+	return hasUpdate, localDigest, newDigest, nil
 }

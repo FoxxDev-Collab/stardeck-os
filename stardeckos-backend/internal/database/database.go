@@ -25,11 +25,30 @@ func Open(cfg Config) error {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}
 
+	// SQLite connection with optimizations for concurrency:
+	// - journal_mode=WAL: Write-Ahead Logging for concurrent reads/writes
+	// - busy_timeout=5000: Wait up to 5 seconds if database is locked (fixes SQLITE_BUSY)
+	// - synchronous=NORMAL: Safe with WAL mode, better performance
+	// - cache_size=-64000: 64MB cache for better read performance
+	// - foreign_keys=1: Enable foreign key constraints
+	dsn := cfg.Path + "?" +
+		"_pragma=foreign_keys(1)&" +
+		"_pragma=journal_mode(WAL)&" +
+		"_pragma=busy_timeout(5000)&" +
+		"_pragma=synchronous(NORMAL)&" +
+		"_pragma=cache_size(-64000)"
+
 	var err error
-	DB, err = sql.Open("sqlite", cfg.Path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+	DB, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Configure connection pool for SQLite
+	// SQLite works best with limited connections due to file-level locking
+	DB.SetMaxOpenConns(1)        // Single writer for SQLite
+	DB.SetMaxIdleConns(1)        // Keep one connection ready
+	DB.SetConnMaxLifetime(0)     // Don't close connections due to age
 
 	// Test connection
 	if err := DB.Ping(); err != nil {
@@ -426,6 +445,17 @@ var migrations = []migration{
 		up: `
 			ALTER TABLE containers ADD COLUMN icon_light TEXT;
 			ALTER TABLE containers ADD COLUMN icon_dark TEXT;
+		`,
+	},
+	{
+		name: "019_create_user_preferences",
+		up: `
+			CREATE TABLE user_preferences (
+				user_id INTEGER PRIMARY KEY,
+				preferences TEXT NOT NULL DEFAULT '{}',
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			);
 		`,
 	},
 }

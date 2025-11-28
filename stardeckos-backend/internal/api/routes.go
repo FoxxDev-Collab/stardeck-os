@@ -37,6 +37,13 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	authProtected.GET("/sessions", getUserSessions)
 	authProtected.DELETE("/sessions/:id", revokeSession)
 
+	// User preferences routes (authenticated)
+	userGroup := api.Group("/user")
+	userGroup.Use(auth.RequireAuth(authSvc))
+	userGroup.GET("/preferences", getUserPreferencesHandler)
+	userGroup.PUT("/preferences", updateUserPreferencesHandler)
+	userGroup.PATCH("/preferences", patchUserPreferencesHandler)
+
 	// User management routes (requires wheel group or root for PAM users, admin for local users)
 	users := api.Group("/users")
 	users.Use(auth.RequireAuth(authSvc))
@@ -229,9 +236,19 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	containers.POST("/:id/start", startContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.POST("/:id/stop", stopContainerHandler, auth.RequireRole(models.RoleAdmin))
 	containers.POST("/:id/restart", restartContainerHandler, auth.RequireRole(models.RoleAdmin))
-	containers.GET("/:id/logs", getContainerLogsHandler)
+	containers.GET("/:id/inspect", inspectContainerHandler)         // Detailed container info
+	containers.GET("/:id/logs", getContainerLogsRESTHandler)       // REST: fetch logs
+	containers.GET("/:id/logs/stream", getContainerLogsHandler)    // WebSocket: stream logs
+	containers.GET("/:id/exec", execContainerHandler)              // WebSocket: terminal shell
 	containers.GET("/:id/stats", getContainerStatsHandler)
 	containers.GET("/:id/metrics", getContainerMetricsHandler)
+
+	// Container update & backup routes
+	containers.GET("/:id/config", getContainerConfigHandler)                                        // Get full container config
+	containers.GET("/:id/backups", listContainerBackupsHandler)                                     // List backups
+	containers.GET("/:id/check-update", checkContainerUpdateHandler)                                // Check for image updates
+	containers.GET("/:id/update", updateContainerImageHandler, auth.RequireRole(models.RoleAdmin))  // WebSocket: update container
+	containers.DELETE("/backups/:backup_id", deleteContainerBackupHandler, auth.RequireRole(models.RoleAdmin)) // Delete backup
 
 	// Container web UI proxy (proxies to container's web interface)
 	containers.Any("/:id/proxy", proxyContainerWebUIHandler)
