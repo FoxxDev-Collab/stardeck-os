@@ -1,9 +1,17 @@
+# github.com/coreos/go-oidc/v3 v3.17.0
+## explicit; go 1.24.0
+github.com/coreos/go-oidc/v3/oidc
 # github.com/creack/pty v1.1.24
 ## explicit; go 1.18
 github.com/creack/pty
 # github.com/dustin/go-humanize v1.0.1
 ## explicit; go 1.16
 github.com/dustin/go-humanize
+# github.com/go-jose/go-jose/v4 v4.1.3
+## explicit; go 1.24.0
+github.com/go-jose/go-jose/v4
+github.com/go-jose/go-jose/v4/cipher
+github.com/go-jose/go-jose/v4/json
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
@@ -54,6 +62,10 @@ golang.org/x/net/http2/h2c
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/internal/httpcommon
+# golang.org/x/oauth2 v0.33.0
+## explicit; go 1.24.0
+golang.org/x/oauth2
+golang.org/x/oauth2/internal
 # golang.org/x/sys v0.38.0
 ## explicit; go 1.24.0
 golang.org/x/sys/cpu

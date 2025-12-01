@@ -35,6 +35,7 @@ echo "Creating directories..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$DATA_DIR"
 mkdir -p "$DATA_DIR/certs"
+mkdir -p "$DATA_DIR/stacks"
 
 # Stop existing service if running
 if systemctl is-active --quiet stardeck; then

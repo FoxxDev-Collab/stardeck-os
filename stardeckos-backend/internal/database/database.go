@@ -458,4 +458,116 @@ var migrations = []migration{
 			);
 		`,
 	},
+	{
+		name: "020_create_stacks",
+		up: `
+			CREATE TABLE IF NOT EXISTS stacks (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				description TEXT,
+				compose_content TEXT NOT NULL,
+				env_content TEXT,
+				path TEXT,
+				status TEXT DEFAULT 'stopped',
+				container_count INTEGER DEFAULT 0,
+				running_count INTEGER DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_stacks_name ON stacks(name);
+			CREATE INDEX IF NOT EXISTS idx_stacks_status ON stacks(status);
+		`,
+	},
+	// Phase 3: Starfleet Alliance tables
+	{
+		name: "021_create_alliance_providers",
+		up: `
+			CREATE TABLE alliance_providers (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL,
+				enabled INTEGER DEFAULT 1,
+				is_managed INTEGER DEFAULT 0,
+				container_id TEXT REFERENCES containers(id) ON DELETE SET NULL,
+				config TEXT NOT NULL DEFAULT '{}',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_alliance_providers_type ON alliance_providers(type);
+			CREATE INDEX idx_alliance_providers_enabled ON alliance_providers(enabled);
+		`,
+	},
+	{
+		name: "022_create_alliance_clients",
+		up: `
+			CREATE TABLE alliance_clients (
+				id TEXT PRIMARY KEY,
+				provider_id TEXT NOT NULL REFERENCES alliance_providers(id) ON DELETE CASCADE,
+				container_id TEXT REFERENCES containers(id) ON DELETE SET NULL,
+				app_name TEXT NOT NULL,
+				client_id TEXT NOT NULL,
+				client_secret TEXT,
+				redirect_uris TEXT,
+				scopes TEXT,
+				sso_tier INTEGER DEFAULT 1,
+				config TEXT DEFAULT '{}',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_alliance_clients_provider ON alliance_clients(provider_id);
+			CREATE INDEX idx_alliance_clients_container ON alliance_clients(container_id);
+		`,
+	},
+	{
+		name: "023_create_alliance_users",
+		up: `
+			CREATE TABLE alliance_users (
+				id TEXT PRIMARY KEY,
+				provider_id TEXT NOT NULL REFERENCES alliance_providers(id) ON DELETE CASCADE,
+				external_id TEXT NOT NULL,
+				username TEXT NOT NULL,
+				email TEXT,
+				display_name TEXT,
+				groups TEXT DEFAULT '[]',
+				local_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				last_sync DATETIME,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(provider_id, external_id)
+			);
+			CREATE INDEX idx_alliance_users_provider ON alliance_users(provider_id);
+			CREATE INDEX idx_alliance_users_username ON alliance_users(username);
+			CREATE INDEX idx_alliance_users_local ON alliance_users(local_user_id);
+		`,
+	},
+	{
+		name: "024_create_alliance_groups",
+		up: `
+			CREATE TABLE alliance_groups (
+				id TEXT PRIMARY KEY,
+				provider_id TEXT NOT NULL REFERENCES alliance_providers(id) ON DELETE CASCADE,
+				external_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				description TEXT,
+				local_group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL,
+				last_sync DATETIME,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(provider_id, external_id)
+			);
+			CREATE INDEX idx_alliance_groups_provider ON alliance_groups(provider_id);
+			CREATE INDEX idx_alliance_groups_name ON alliance_groups(name);
+			CREATE INDEX idx_alliance_groups_local ON alliance_groups(local_group_id);
+		`,
+	},
+	{
+		name: "025_create_alliance_settings",
+		up: `
+			INSERT OR IGNORE INTO settings (key, value) VALUES
+				('alliance.enabled', 'false'),
+				('alliance.default_provider', ''),
+				('alliance.auto_provision_users', 'true'),
+				('alliance.sync_groups', 'true'),
+				('alliance.header_prefix', 'X-Remote-');
+		`,
+	},
 }

@@ -313,4 +313,47 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 
 	// Desktop apps endpoint (containers with web UIs)
 	api.GET("/desktop-apps", listDesktopAppsHandler, auth.RequireAuth(authSvc))
+
+	// Phase 3: Starfleet Alliance (SSO/Identity Federation)
+	InitAllianceRepo()
+
+	// OIDC authentication endpoints (public - no auth required)
+	api.GET("/alliance/providers/:id/login", oidcLoginHandler)
+	api.GET("/alliance/callback", oidcCallbackHandler)
+
+	// Forward auth endpoint for proxy authentication (Tier 1 SSO)
+	api.GET("/auth/verify", auth.ProxyAuthHandler(authSvc))
+
+	alliance := api.Group("/alliance")
+	alliance.Use(auth.RequireAuth(authSvc))
+
+	// Alliance status (all authenticated users can view)
+	alliance.GET("/status", getAllianceStatusHandler)
+
+	// Provider management (admin only for write operations)
+	alliance.GET("/providers", listProvidersHandler)
+	alliance.GET("/providers/:id", getProviderHandler)
+	alliance.POST("/providers", createProviderHandler, auth.RequireRole(models.RoleAdmin))
+	alliance.PUT("/providers/:id", updateProviderHandler, auth.RequireRole(models.RoleAdmin))
+	alliance.DELETE("/providers/:id", deleteProviderHandler, auth.RequireRole(models.RoleAdmin))
+	alliance.POST("/providers/:id/test", testProviderHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Client management (admin only)
+	alliance.GET("/clients", listClientsHandler)
+	alliance.GET("/clients/:id", getClientHandler)
+	alliance.POST("/clients", createClientHandler, auth.RequireRole(models.RoleAdmin))
+	alliance.DELETE("/clients/:id", deleteClientHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Federated users and groups (read: all, sync: operator+)
+	alliance.GET("/users", listAllianceUsersHandler)
+	alliance.GET("/groups", listAllianceGroupsHandler)
+	alliance.POST("/users/sync", syncUsersHandler, auth.RequireOperatorOrAdmin())
+	alliance.POST("/users/:id/link", linkAllianceUserHandler, auth.RequireRole(models.RoleAdmin))
+
+	// Built-in templates (Phase 3: Office Suite, Auth Providers)
+	builtIn := api.Group("/builtin-templates")
+	builtIn.Use(auth.RequireAuth(authSvc))
+	builtIn.GET("", listBuiltInTemplatesHandler)
+	builtIn.GET("/:id", getBuiltInTemplateHandler)
+	builtIn.POST("/:id/deploy", deployBuiltInTemplateHandler, auth.RequireRole(models.RoleAdmin))
 }

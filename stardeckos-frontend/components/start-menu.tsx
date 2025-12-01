@@ -19,6 +19,7 @@ import {
   ChevronDown,
   X,
   Shield,
+  ShieldCheck,
   UserCog,
   Globe,
   Server,
@@ -74,6 +75,7 @@ const navSections: NavSection[] = [
       { name: "User Manager", href: "/user-manager", icon: Users },
       { name: "Group Manager", href: "/group-manager", icon: UserCog },
       { name: "Realm Manager", href: "/realm-manager", icon: Globe },
+      { name: "Alliance", href: "/alliance", icon: ShieldCheck },
       { name: "Audit Log", href: "/audit-log", icon: FileText },
     ],
   },
@@ -297,10 +299,10 @@ export function StartMenu({ isOpen, onClose }: StartMenuProps) {
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border/50 bg-background/40">
           <div className="text-center">
             <p className="text-xs text-muted-foreground/60 tracking-wider">
-              STARDECK OS v2.0.0
+              STARDECK OS v3.0.0
             </p>
             <p className="text-xs text-muted-foreground/60 mt-1">
-              <span className="text-accent">&gt;</span> PHASE 2
+              <span className="text-accent">&gt;</span> PHASE 3
             </p>
           </div>
         </div>
