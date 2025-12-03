@@ -166,7 +166,7 @@ func (p *PAMAuth) GetSystemGroups() ([]*SystemGroup, error) {
 			continue
 		}
 
-		var members []string
+		members := []string{}
 		if fields[3] != "" {
 			members = strings.Split(fields[3], ",")
 		}

@@ -51,13 +51,6 @@ interface Template {
   usage_count: number;
 }
 
-interface VolumeHint {
-  name: string;
-  suggested_path: string;
-  description: string;
-  required: boolean;
-}
-
 interface TemplatesTabProps {
   token: string;
   isAdmin: boolean;

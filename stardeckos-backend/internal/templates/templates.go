@@ -93,7 +93,7 @@ var CryptPadTemplate = BuiltInTemplate{
 
 services:
   cryptpad:
-    image: cryptpad/cryptpad:latest
+    image: docker.io/cryptpad/cryptpad:latest
     container_name: stardeck-office
     hostname: cryptpad
     environment:
@@ -187,8 +187,8 @@ var AuthentikTemplate = BuiltInTemplate{
 
 services:
   postgresql:
-    image: postgres:15-alpine
-    container_name: authentik-db
+    image: docker.io/library/postgres:15-alpine
+    container_name: authentik-postgresql
     environment:
       - POSTGRES_PASSWORD=${PG_PASS:-authentik}
       - POSTGRES_USER=authentik
@@ -203,7 +203,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: docker.io/library/redis:7-alpine
     container_name: authentik-redis
     command: redis-server --save 60 1 --loglevel warning
     volumes:
@@ -236,10 +236,8 @@ services:
       - "${AUTHENTIK_PORT:-9000}:9000"
       - "${AUTHENTIK_HTTPS_PORT:-9443}:9443"
     depends_on:
-      postgresql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgresql
+      - redis
     restart: unless-stopped
     labels:
       - "stardeck.app=authentik"
@@ -265,10 +263,8 @@ services:
       - authentik_templates:/templates
       - authentik_certs:/certs
     depends_on:
-      postgresql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - postgresql
+      - redis
     restart: unless-stopped
 
 volumes:

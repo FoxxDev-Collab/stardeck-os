@@ -204,8 +204,8 @@ export default function NetworkManagerPage() {
         });
         setInterfaceStats(statsMap);
       }
-    } catch (err) {
-      console.error("Failed to fetch interfaces:", err);
+    } catch {
+      // Interface fetch failed silently
     }
   }, [token]);
 
@@ -221,8 +221,8 @@ export default function NetworkManagerPage() {
       if (statusRes.ok) setFirewallStatus(await statusRes.json());
       if (zonesRes.ok) setZones(await zonesRes.json());
       if (servicesRes.ok) setAvailableServices(await servicesRes.json());
-    } catch (err) {
-      console.error("Failed to fetch firewall data:", err);
+    } catch {
+      // Firewall data fetch failed silently
     }
   }, [token]);
 
@@ -236,8 +236,8 @@ export default function NetworkManagerPage() {
 
       if (routesRes.ok) setRoutes(await routesRes.json());
       if (dnsRes.ok) setDns(await dnsRes.json());
-    } catch (err) {
-      console.error("Failed to fetch routes:", err);
+    } catch {
+      // Routes fetch failed silently
     }
   }, [token]);
 
@@ -252,8 +252,8 @@ export default function NetworkManagerPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) setConnections(await res.json());
-    } catch (err) {
-      console.error("Failed to fetch connections:", err);
+    } catch {
+      // Connections fetch failed silently
     }
   }, [token, connectionFilter]);
 
@@ -350,7 +350,7 @@ export default function NetworkManagerPage() {
       setResultDialog(true);
       setAddServiceDialog(false);
       if (res.ok) fetchFirewall();
-    } catch (err) {
+    } catch {
       setResultMessage({ success: false, message: "Failed to add service" });
       setResultDialog(true);
     }
@@ -381,7 +381,7 @@ export default function NetworkManagerPage() {
       setResultDialog(true);
       setAddPortDialog(false);
       if (res.ok) fetchFirewall();
-    } catch (err) {
+    } catch {
       setResultMessage({ success: false, message: "Failed to add port" });
       setResultDialog(true);
     }
@@ -408,7 +408,7 @@ export default function NetworkManagerPage() {
       setResultDialog(true);
       setAddRouteDialog(false);
       if (res.ok) fetchRoutes();
-    } catch (err) {
+    } catch {
       setResultMessage({ success: false, message: "Failed to add route" });
       setResultDialog(true);
     }
@@ -458,7 +458,7 @@ export default function NetworkManagerPage() {
           }
         }
       }
-    } catch (err) {
+    } catch {
       setResultMessage({ success: false, message: "Failed to delete" });
       setResultDialog(true);
     }
@@ -480,7 +480,7 @@ export default function NetworkManagerPage() {
       });
       setResultDialog(true);
       if (res.ok) fetchFirewall();
-    } catch (err) {
+    } catch {
       setResultMessage({ success: false, message: "Failed to reload firewall" });
       setResultDialog(true);
     }

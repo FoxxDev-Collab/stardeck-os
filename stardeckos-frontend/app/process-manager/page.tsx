@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Cpu,
   Database,
-  HardDrive,
   Clock,
   ArrowUpDown,
   ArrowUp,
@@ -213,8 +212,6 @@ export default function ProcessManagerPage() {
       }
     });
 
-  const totalProcessCpu = processes.reduce((acc, p) => acc + p.cpu_percent, 0);
-  const totalProcessMemory = processes.reduce((acc, p) => acc + p.memory_mb, 0);
   const runningCount = processes.filter((p) => p.state === "R").length;
   const sleepingCount = processes.filter((p) => p.state === "S").length;
   const zombieCount = processes.filter((p) => p.state === "Z").length;

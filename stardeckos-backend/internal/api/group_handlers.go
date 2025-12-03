@@ -343,3 +343,72 @@ func listSystemGroupsHandler(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, groups)
 }
+
+// addSystemGroupMemberHandler handles POST /api/system/groups/:name/members
+func addSystemGroupMemberHandler(c echo.Context) error {
+	groupName := c.Param("name")
+	if groupName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "group name required",
+		})
+	}
+
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := c.Bind(&req); err != nil || req.Username == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "username required",
+		})
+	}
+
+	pamAuth := auth.NewPAMAuth()
+	if err := pamAuth.AddUserToGroup(req.Username, groupName); err != nil {
+		c.Logger().Error("add user to system group error: ", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "failed to add user to group: " + err.Error(),
+		})
+	}
+
+	// Audit log
+	adminUser := c.Get("user").(*models.User)
+	logAudit(adminUser, models.ActionGroupAddMember, groupName, map[string]interface{}{
+		"username":     req.Username,
+		"system_group": true,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "user added to group",
+	})
+}
+
+// removeSystemGroupMemberHandler handles DELETE /api/system/groups/:name/members/:username
+func removeSystemGroupMemberHandler(c echo.Context) error {
+	groupName := c.Param("name")
+	username := c.Param("username")
+
+	if groupName == "" || username == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "group name and username required",
+		})
+	}
+
+	pamAuth := auth.NewPAMAuth()
+	if err := pamAuth.RemoveUserFromGroup(username, groupName); err != nil {
+		c.Logger().Error("remove user from system group error: ", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "failed to remove user from group: " + err.Error(),
+		})
+	}
+
+	// Audit log
+	adminUser := c.Get("user").(*models.User)
+	logAudit(adminUser, models.ActionGroupRemoveMember, groupName, map[string]interface{}{
+		"username":     username,
+		"system_group": true,
+	})
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "user removed from group",
+	})
+}

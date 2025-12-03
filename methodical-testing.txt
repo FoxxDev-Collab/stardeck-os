@@ -1,0 +1,76 @@
+Testing, phase by phase:
+
+install = pass
+interface access = pass
+root login = pass
+
+Phase 1:
+user create, edit, delete, disable = pass
+group create, edit, delete = fail: 
+
+"Uncaught TypeError: Cannot read properties of null (reading 'length')
+    at 9059ce4a86e617df.js:1:25311
+    at Array.map (<anonymous>)
+    at x (9059ce4a86e617df.js:1:24765)
+    at l8 (2468949c4832742b.js:1:60324)
+    at oz (2468949c4832742b.js:1:80005)
+    at oV (2468949c4832742b.js:1:91035)
+    at iy (2468949c4832742b.js:1:123697)
+    at 2468949c4832742b.js:1:123542
+    at ig (2468949c4832742b.js:1:123550)
+    at il (2468949c4832742b.js:1:120633)"
+
+group fixes: cannot add a new user to sudo/wheel
+
+"group-manager:1 Uncaught (in promise) Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received"
+
+continuing testing...
+
+podman/containers: installation = pass with UI bug (screenshot to be provided)
+
+phase 2:
+
+phase 3:
+
+authentik install = failed:
+
+"d6a49c80928e66d2b6865ebb4b1d4701adb4797724cbd82955b022253af2ba84
+Error: short-name resolution enforced but cannot prompt without a TTY
+Error: short-name resolution enforced but cannot prompt without a TTY
+Trying to pull ghcr.io/goauthentik/server:latest...
+Getting image source signatures
+Copying blob sha256:0a5e3e352b7fb85b19e0eeb665b7942edab0d445cd8e2ac978c3d10735895419
+Copying blob sha256:4a23ada4d5ec10d0b2d7728227dc5c650837de3d98d2d55f0c0de0f3e643319f
+Copying blob sha256:6e909acdb790c5a1989d9cfc795fda5a246ad6664bb27b5c688e2b734b2c5fad
+Copying blob sha256:532e41e694d29d56c082ec1d0af32c4eb3edcf8dae054dfa1ef6a32038307b56
+Copying blob sha256:9ac65130f860d5a00a1971d039a8c57f64318da5c2a5443bb1fd5d0c44d0db1f
+Copying blob sha256:49a6e7f12fd9696550505f96ddd48455f8a26caff467dcc37fb7ed9505b8f17c
+Copying blob sha256:45cf754f725d049288911cf7608413eb670700c8b65081227dd53d4f7ab9d478
+Copying blob sha256:dc0c1ad92f085f42494802d0e0b1801e067404e3bd0d98ca3454566f882bb653
+Copying blob sha256:8ffb4d8e5a27838e86a50cccec598c6e74eca182c903903b53bfe9e1ccf62d3d
+Copying blob sha256:e598fe4ca6a787f68399666a286f20b4b141d8e56d1343eafdcad71bd64c3ea4
+Copying blob sha256:e343f6e06123fb5301a42fdb2842d02270741487aa879196dfe808058b50f1cf
+Copying blob sha256:1fdbc6cb22c2f71c345410b2509b41c78628c73968331e06107fb2caef1203b2
+Copying blob sha256:c0c35e20c0d653a9c2d1985e9794d04025e6e73daf6220516135e008d4e81805
+Copying blob sha256:f05fb752dcbf29a5c6d080d5dc4b1cb4ff9e4527cdcf66ead0bb67b1771a0254
+Copying blob sha256:b59bae4c68c330226656dd0e914d7d9731564a9438008993106c85f98df0be28
+Copying blob sha256:7dc182e123a705aa13c3c47b37f7730852b5c157fdbac7c2f7b863342d43f5bf
+Copying blob sha256:360c3b469aface6a9f5707cc3043614d453c78588d93feb4e9b712edee154fd6
+Copying blob sha256:e85312dc3f6b8f0644213d8b0b58cfaf2f3f352978e061a960c820cb0cc92def
+Copying blob sha256:bdfed36dc3ab6275a977b96be8025e64dd7f14ace309d97a213eb1ff27ee77ed
+Copying blob sha256:2f443bdbb6fddda9c8034745e72eae023e694a391eba708450dd64835bb41c79
+Copying blob sha256:929f26bc846c281bfb7442b237a7b99c771216d0c8ecd956e0e94482957446f7
+Copying blob sha256:aaa711b7a5e5d321574a2639d41ff50d810ab206464e0cfb45d3d3be28e4434e
+Copying blob sha256:24e89088277578f0320368568c739f75f33215c9207a05998a6eb92c3d3b3347
+Copying blob sha256:7202b3b873e6436bbbc2dcda4898bcf8a3639020a65c1b7999135120fbcb6106
+Copying blob sha256:aa53b48913c48489844441a4d76bed31d1f174371284c16b886ea0cf36676223
+Copying blob sha256:32b477c571f8125c54632f339ac28597bcb5e1fd3da8c66b7100225cec20310c
+Copying config sha256:e3c993bbf4f6bb9b2bc28f8e81e04ded7fb2e01543ecf0a4777dd7021ce6cc30
+Writing manifest to image destination
+Error: "authentik-db" is not a valid container, cannot be used as a dependency: no container with name or ID "authentik-db" found: no such container
+Error: "authentik-db" is not a valid container, cannot be used as a dependency: no container with name or ID "authentik-db" found: no such container
+Error: no container with name or ID "authentik-db" found: no such container
+Error: no container with name or ID "authentik-redis" found: no such container"
+
+- it seems like there are issues with the stack, this is failing.
+

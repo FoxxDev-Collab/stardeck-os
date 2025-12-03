@@ -28,7 +28,6 @@ import {
   HardDrive,
   Settings,
   Play,
-  Save,
   Info,
   ExternalLink,
   CheckCircle2,
@@ -173,7 +172,6 @@ function ContainerCreateContent() {
   const [iconDark, setIconDark] = useState("");
 
   // UI state
-  const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Validation and deployment state
@@ -191,7 +189,6 @@ function ContainerCreateContent() {
   const [inspectStatus, setInspectStatus] = useState<string>("");
   const [inspectOutput, setInspectOutput] = useState<string[]>([]);
   const [imageConfig, setImageConfig] = useState<ImageConfig | null>(null);
-  const [imageFound, setImageFound] = useState<boolean | null>(null);
   const inspectOutputRef = useRef<HTMLDivElement>(null);
 
   // Fetch available Podman volumes
@@ -394,7 +391,6 @@ function ContainerCreateContent() {
     setInspectStatus("connecting");
     setInspectOutput([]);
     setImageConfig(null);
-    setImageFound(null);
 
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${wsProtocol}//${window.location.host}/api/images/inspect/ws`;
@@ -431,7 +427,6 @@ function ContainerCreateContent() {
           setInspectOutput(prev => [...prev, "Analyzing image configuration..."]);
         } else if (data.status === "complete") {
           setInspectStatus("complete");
-          setImageFound(data.found);
           if (data.config) {
             setImageConfig(data.config);
             setInspectOutput(prev => [...prev, "✓ Image configuration loaded"]);
@@ -439,7 +434,6 @@ function ContainerCreateContent() {
           setIsInspecting(false);
         } else if (data.status === "not_found") {
           setInspectStatus("not_found");
-          setImageFound(false);
           setIsInspecting(false);
         }
       } catch (err) {
@@ -533,43 +527,8 @@ function ContainerCreateContent() {
     setShowInspectDialog(false);
   };
 
-  // Live validation when key fields change
-  useEffect(() => {
-    const validateConfig = async () => {
-      if (!token || !imageName) {
-        setValidationResults([]);
-        return;
-      }
-
-      setIsValidating(true);
-      try {
-        const payload = buildPayload();
-        const response = await fetch("/api/containers/validate", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setValidationResults(data.results || []);
-        }
-      } catch (err) {
-        console.error("Validation error:", err);
-      } finally {
-        setIsValidating(false);
-      }
-    };
-
-    const timer = setTimeout(validateConfig, 500);
-    return () => clearTimeout(timer);
-  }, [token, imageName, imageTag, containerName, ports]);
-
   // Build the container creation payload
-  const buildPayload = () => {
+  const buildPayload = useCallback(() => {
     return {
       name: containerName || undefined,
       image: imageTag ? `${imageName}:${imageTag}` : imageName,
@@ -607,7 +566,42 @@ function ContainerCreateContent() {
       icon_light: iconLight || undefined,
       icon_dark: iconDark || undefined,
     };
-  };
+  }, [containerName, imageTag, imageName, autoStart, privileged, networkMode, restartPolicy, ports, volumes, envVars, command, entrypoint, workingDir, user, hostname, cpuLimit, memoryLimit, hasWebUI, webUIPort, webUIPath, containerIcon, iconLight, iconDark]);
+
+  // Live validation when key fields change
+  useEffect(() => {
+    const validateConfig = async () => {
+      if (!token || !imageName) {
+        setValidationResults([]);
+        return;
+      }
+
+      setIsValidating(true);
+      try {
+        const payload = buildPayload();
+        const response = await fetch("/api/containers/validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setValidationResults(data.results || []);
+        }
+      } catch (err) {
+        console.error("Validation error:", err);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+
+    const timer = setTimeout(validateConfig, 500);
+    return () => clearTimeout(timer);
+  }, [token, imageName, buildPayload]);
 
   // Deploy container with WebSocket streaming
   const deployContainer = async () => {

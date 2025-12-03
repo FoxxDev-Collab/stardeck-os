@@ -570,4 +570,47 @@ var migrations = []migration{
 				('alliance.header_prefix', 'X-Remote-');
 		`,
 	},
+	// Phase: Database Management
+	{
+		name: "026_create_managed_databases",
+		up: `
+			CREATE TABLE managed_databases (
+				id TEXT PRIMARY KEY,
+				container_id TEXT NOT NULL,
+				name TEXT NOT NULL,
+				type TEXT NOT NULL,
+				version TEXT,
+				image TEXT NOT NULL,
+				internal_host TEXT NOT NULL,
+				internal_port INTEGER NOT NULL,
+				external_port INTEGER DEFAULT 0,
+				admin_user TEXT,
+				admin_password TEXT,
+				network TEXT DEFAULT 'stardeck-data',
+				volume_name TEXT,
+				status TEXT DEFAULT 'stopped',
+				is_shared INTEGER DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE INDEX idx_managed_databases_type ON managed_databases(type);
+			CREATE INDEX idx_managed_databases_container ON managed_databases(container_id);
+			CREATE INDEX idx_managed_databases_status ON managed_databases(status);
+			CREATE INDEX idx_managed_databases_shared ON managed_databases(is_shared);
+
+			CREATE TABLE database_connections (
+				id TEXT PRIMARY KEY,
+				database_id TEXT NOT NULL REFERENCES managed_databases(id) ON DELETE CASCADE,
+				container_id TEXT NOT NULL,
+				app_name TEXT,
+				database_name TEXT NOT NULL,
+				username TEXT,
+				password TEXT,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_db_connections_database ON database_connections(database_id);
+			CREATE INDEX idx_db_connections_container ON database_connections(container_id);
+		`,
+	},
 }

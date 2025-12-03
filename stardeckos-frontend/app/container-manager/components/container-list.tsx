@@ -31,7 +31,6 @@ import {
 import {
   Container,
   ContainerStatus,
-  formatBytes,
   getStatusColor,
   getStatusBgColor,
 } from "../types";

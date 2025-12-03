@@ -83,6 +83,8 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 	system.GET("/resources", getResourcesHandler)
 	system.GET("/info", getSystemInfoHandler)
 	system.GET("/groups", listSystemGroupsHandler) // View system groups
+	system.POST("/groups/:name/members", addSystemGroupMemberHandler, auth.RequireRole(models.RoleAdmin))
+	system.DELETE("/groups/:name/members/:username", removeSystemGroupMemberHandler, auth.RequireRole(models.RoleAdmin))
 	system.POST("/reboot", rebootSystemHandler, auth.RequireRole(models.RoleAdmin))
 
 	// Process routes (authenticated, kill requires operator+)
@@ -313,6 +315,25 @@ func RegisterRoutes(api *echo.Group, authSvc *auth.Service) {
 
 	// Desktop apps endpoint (containers with web UIs)
 	api.GET("/desktop-apps", listDesktopAppsHandler, auth.RequireAuth(authSvc))
+
+	// Database management routes (Phase 4: Smart Database Management)
+	InitDatabaseRepos()
+
+	databases := api.Group("/databases")
+	databases.Use(auth.RequireAuth(authSvc))
+	databases.GET("", listDatabasesHandler)
+	databases.GET("/types", getDatabaseTypesHandler)
+	databases.GET("/detect", detectDatabasesHandler, auth.RequireRole(models.RoleAdmin))
+	databases.POST("/sync", syncDatabaseStatusesHandler, auth.RequireRole(models.RoleAdmin))
+	databases.POST("", createDatabaseHandler, auth.RequireRole(models.RoleAdmin))
+	databases.GET("/:id", getDatabaseHandler)
+	databases.DELETE("/:id", deleteDatabaseHandler, auth.RequireRole(models.RoleAdmin))
+	databases.POST("/:id/start", startDatabaseHandler, auth.RequireRole(models.RoleAdmin))
+	databases.POST("/:id/stop", stopDatabaseHandler, auth.RequireRole(models.RoleAdmin))
+	databases.GET("/:id/connections", listDatabaseConnectionsHandler)
+	databases.POST("/:id/connections", createDatabaseConnectionHandler, auth.RequireRole(models.RoleAdmin))
+	databases.DELETE("/:id/connections/:conn_id", deleteDatabaseConnectionHandler, auth.RequireRole(models.RoleAdmin))
+	databases.POST("/adopt/:container_id", adoptDatabaseHandler, auth.RequireRole(models.RoleAdmin))
 
 	// Phase 3: Starfleet Alliance (SSO/Identity Federation)
 	InitAllianceRepo()

@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ArrowLeft,
   Play,
@@ -24,14 +23,9 @@ import {
   Globe,
   Network,
   HardDrive,
-  Clock,
   Cpu,
-  MemoryStick,
   Loader2,
-  CheckCircle2,
-  XCircle,
   AlertCircle,
-  ExternalLink,
   Save,
   Trash2,
   Box,
@@ -629,7 +623,6 @@ function ContainerDetailsContent() {
                 <div className="max-w-2xl">
                   <UpdateTab
                     containerId={container.container_id}
-                    containerName={container.name}
                     currentImage={container.image}
                     hasVolumes={inspect?.Mounts && inspect.Mounts.some(m => m.Type === "bind") || false}
                   />

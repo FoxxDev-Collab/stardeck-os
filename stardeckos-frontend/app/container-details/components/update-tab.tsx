@@ -47,7 +47,6 @@ import {
 
 interface UpdateTabProps {
   containerId: string;
-  containerName: string;
   currentImage: string;
   hasVolumes: boolean;
 }
@@ -86,9 +85,8 @@ interface UpdateProgress {
   details?: Record<string, unknown>;
 }
 
-export function UpdateTab({ containerId, containerName, currentImage, hasVolumes }: UpdateTabProps) {
+export function UpdateTab({ containerId, currentImage, hasVolumes }: UpdateTabProps) {
   const { token, user } = useAuth();
-  const [loading, setLoading] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [backups, setBackups] = useState<Backup[]>([]);

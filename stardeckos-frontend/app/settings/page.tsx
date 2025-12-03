@@ -41,7 +41,7 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Image,
+  Image as ImageIcon,
   ImagePlus,
 } from "lucide-react";
 import { BackgroundType } from "@/lib/settings-context";
@@ -76,7 +76,6 @@ export default function SettingsPage() {
     customThemes,
     removeCustomTheme,
     applyCustomTheme,
-    getActiveCustomTheme,
   } = useSettings();
 
   // Get the correct home directory path for a user
@@ -848,7 +847,7 @@ export default function SettingsPage() {
               <Card className="border-border/60 bg-card/70 backdrop-blur-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Image className="w-5 h-5 text-accent" />
+                    <ImageIcon className="w-5 h-5 text-accent" />
                     Desktop Background
                   </CardTitle>
                   <CardDescription>

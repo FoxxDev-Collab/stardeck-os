@@ -20,7 +20,6 @@ interface ContainerTerminalProps {
 
 export function ContainerTerminal({ containerId, containerName, onClose }: ContainerTerminalProps) {
   const { token } = useAuth();
-  const terminalRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);

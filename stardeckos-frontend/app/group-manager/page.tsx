@@ -10,7 +10,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Activity, Users, Shield, AlertCircle } from 'lucide-react'
+import { Activity, Users, Shield, AlertCircle, UserPlus, X } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 interface Group {
   id: number
@@ -37,6 +44,9 @@ export default function GroupManagerPage() {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [activeTab, setActiveTab] = useState('stardeck')
   const [error, setError] = useState<string | null>(null)
+  const [selectedSystemGroup, setSelectedSystemGroup] = useState<SystemGroup | null>(null)
+  const [newMemberUsername, setNewMemberUsername] = useState('')
+  const [addingMember, setAddingMember] = useState(false)
 
   const [formData, setFormData] = useState({
     name: '',
@@ -171,6 +181,67 @@ export default function GroupManagerPage() {
       fetchSystemGroups()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to delete group')
+    }
+  }
+
+  const addSystemGroupMember = async (groupName: string, username: string) => {
+    if (!token || !username.trim()) return
+
+    setAddingMember(true)
+    try {
+      const response = await fetch(`/api/system/groups/${encodeURIComponent(groupName)}/members`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username: username.trim() }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to add user to group')
+      }
+
+      await fetchSystemGroups()
+      setNewMemberUsername('')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to add user to group')
+    } finally {
+      setAddingMember(false)
+    }
+  }
+
+  const removeSystemGroupMember = async (groupName: string, username: string) => {
+    if (!token || !confirm(`Remove ${username} from ${groupName}?`)) return
+
+    try {
+      const response = await fetch(
+        `/api/system/groups/${encodeURIComponent(groupName)}/members/${encodeURIComponent(username)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to remove user from group')
+      }
+
+      await fetchSystemGroups()
+      // Update the selected group if it's the one we modified
+      if (selectedSystemGroup?.name === groupName) {
+        const updated = systemGroups.find(g => g.name === groupName)
+        if (updated) {
+          setSelectedSystemGroup({
+            ...updated,
+            members: (updated.members || []).filter(m => m !== username)
+          })
+        }
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to remove user from group')
     }
   }
 
@@ -364,30 +435,49 @@ export default function GroupManagerPage() {
               systemGroups.map((group) => (
                 <Card key={group.gid} className="border-border/60 bg-card/70 backdrop-blur-sm">
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      {group.name}
-                      <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                        GID {group.gid}
-                      </span>
-                      {(group.name === 'wheel' || group.name === 'sudo') && (
-                        <span className="text-xs bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 px-2 py-1 rounded">
-                          Admin Group
-                        </span>
-                      )}
-                    </CardTitle>
-                    <CardDescription>
-                      {group.members.length} member{group.members.length !== 1 ? 's' : ''}
-                    </CardDescription>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          {group.name}
+                          <span className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                            GID {group.gid}
+                          </span>
+                          {(group.name === 'wheel' || group.name === 'sudo') && (
+                            <span className="text-xs bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 px-2 py-1 rounded">
+                              Admin Group
+                            </span>
+                          )}
+                        </CardTitle>
+                        <CardDescription>
+                          {(group.members || []).length} member{(group.members || []).length !== 1 ? 's' : ''}
+                        </CardDescription>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSelectedSystemGroup(group)}
+                      >
+                        <UserPlus className="w-4 h-4 mr-1" />
+                        Manage
+                      </Button>
+                    </div>
                   </CardHeader>
-                  {group.members.length > 0 && (
+                  {(group.members || []).length > 0 && (
                     <CardContent>
                       <div className="flex flex-wrap gap-2">
-                        {group.members.map((member) => (
-                          <span 
+                        {(group.members || []).map((member) => (
+                          <span
                             key={member}
-                            className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded"
+                            className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded flex items-center gap-1"
                           >
                             {member}
+                            <button
+                              onClick={() => removeSystemGroupMember(group.name, member)}
+                              className="ml-1 hover:text-red-500"
+                              title={`Remove ${member} from ${group.name}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
                           </span>
                         ))}
                       </div>
@@ -398,6 +488,70 @@ export default function GroupManagerPage() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* Add Member Dialog */}
+        <Dialog open={!!selectedSystemGroup} onOpenChange={(open) => !open && setSelectedSystemGroup(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Manage {selectedSystemGroup?.name} Members</DialogTitle>
+              <DialogDescription>
+                Add or remove users from the {selectedSystemGroup?.name} group.
+                {(selectedSystemGroup?.name === 'wheel' || selectedSystemGroup?.name === 'sudo') && (
+                  <span className="block mt-1 text-amber-600 dark:text-amber-400">
+                    Warning: This is an admin group. Members will have sudo privileges.
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              {/* Add new member */}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Username to add..."
+                  value={newMemberUsername}
+                  onChange={(e) => setNewMemberUsername(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && selectedSystemGroup) {
+                      addSystemGroupMember(selectedSystemGroup.name, newMemberUsername)
+                    }
+                  }}
+                />
+                <Button
+                  onClick={() => selectedSystemGroup && addSystemGroupMember(selectedSystemGroup.name, newMemberUsername)}
+                  disabled={addingMember || !newMemberUsername.trim()}
+                >
+                  {addingMember ? 'Adding...' : 'Add'}
+                </Button>
+              </div>
+
+              {/* Current members */}
+              <div>
+                <Label className="text-sm text-muted-foreground mb-2 block">Current Members</Label>
+                {(selectedSystemGroup?.members || []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic">No members</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {(selectedSystemGroup?.members || []).map((member) => (
+                      <span
+                        key={member}
+                        className="text-sm bg-muted px-3 py-1 rounded-full flex items-center gap-2"
+                      >
+                        {member}
+                        <button
+                          onClick={() => selectedSystemGroup && removeSystemGroupMember(selectedSystemGroup.name, member)}
+                          className="hover:text-red-500"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   )

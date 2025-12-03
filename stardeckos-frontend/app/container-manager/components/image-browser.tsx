@@ -91,6 +91,7 @@ export function ImageBrowser({ onRefresh }: ImageBrowserProps) {
 
   useEffect(() => {
     fetchImages();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {

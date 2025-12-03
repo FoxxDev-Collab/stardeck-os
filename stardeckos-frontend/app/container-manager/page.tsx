@@ -10,12 +10,12 @@ import { Input } from "@/components/ui/input";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ContainerDetailsSheet } from "./components/container-details";
-import { ContainerStatsChart } from "./components/container-stats-chart";
 import { ContainerTerminal } from "./components/container-terminal";
 import { ContainerLogs } from "./components/container-logs";
 import { ImageBrowser } from "./components/image-browser";
 import { StacksTab } from "@/components/stacks-tab";
 import { TemplatesTab } from "@/components/templates-tab";
+import { DatabasesTab } from "@/components/databases-tab";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -44,8 +44,6 @@ import {
   Network,
   Download,
   Clock,
-  Cpu,
-  MemoryStick,
   Package,
   Layers,
   Settings,
@@ -54,6 +52,7 @@ import {
   Pencil,
   FileCode2,
   ExternalLink,
+  Database,
 } from "lucide-react";
 
 interface Container {
@@ -107,17 +106,6 @@ interface PodmanNetwork {
   subnet: string;
   gateway: string;
   internal: boolean;
-}
-
-interface ContainerStats {
-  container_id: string;
-  cpu_percent: number;
-  memory_used: number;
-  memory_limit: number;
-  memory_percent: number;
-  network_rx: number;
-  network_tx: number;
-  pids: number;
 }
 
 interface InstallMessage {
@@ -177,7 +165,6 @@ export default function ContainerManagerPage() {
 
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [selectedContainerForDetails, setSelectedContainerForDetails] = useState<string | null>(null);
   const [selectedContainerForLogs, setSelectedContainerForLogs] = useState<string | null>(null);
   const [selectedContainerForTerminal, setSelectedContainerForTerminal] = useState<string | null>(null);
@@ -290,7 +277,7 @@ export default function ContainerManagerPage() {
       await fetchStorageConfig();
       // Refresh containers/volumes as they may have been reset
       await Promise.all([fetchContainers(), fetchVolumes()]);
-    } catch (err) {
+    } catch {
       setStorageError("Failed to update storage location");
     } finally {
       setUpdatingStorage(false);
@@ -597,7 +584,8 @@ export default function ContainerManagerPage() {
   };
 
   // Open edit dialog for managed container
-  const openEditDialog = async (container: Container) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _openEditDialog = async (container: Container) => {
     if (!token) return;
 
     // Fetch current container details to get web_ui settings
@@ -785,12 +773,14 @@ export default function ContainerManagerPage() {
     }
   };
 
-  const viewLogs = (container: Container) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _viewLogs = (container: Container) => {
     setSelectedContainer(container);
     setSelectedContainerForLogs(container.container_id);
   };
 
-  const viewStats = (container: Container) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _viewStats = (container: Container) => {
     setSelectedContainer(container);
     setSelectedContainerForDetails(container.container_id);
   };
@@ -815,7 +805,8 @@ export default function ContainerManagerPage() {
     }
   };
 
-  const formatBytes = (bytes: number) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _formatBytes = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
     const sizes = ["B", "KB", "MB", "GB", "TB"];
@@ -1059,6 +1050,9 @@ export default function ContainerManagerPage() {
             </TabsTrigger>
             <TabsTrigger value="templates" className="gap-2">
               <FileCode2 className="w-4 h-4" /> Templates
+            </TabsTrigger>
+            <TabsTrigger value="databases" className="gap-2">
+              <Database className="w-4 h-4" /> Databases
             </TabsTrigger>
           </TabsList>
 
@@ -1504,6 +1498,11 @@ export default function ContainerManagerPage() {
           {/* Templates Tab */}
           <TabsContent value="templates" className="space-y-4">
             <TemplatesTab token={token || ""} isAdmin={isAdmin} />
+          </TabsContent>
+
+          {/* Databases Tab */}
+          <TabsContent value="databases" className="space-y-4">
+            <DatabasesTab token={token || ""} isAdmin={isAdmin} />
           </TabsContent>
         </Tabs>
       </div>

@@ -168,7 +168,8 @@ export function validateTheme(theme: { light: ParsedThemeVariables; dark: Parsed
  */
 export function applyThemeVariables(
   variables: ParsedThemeVariables,
-  isDarkMode: boolean = false
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _isDarkMode: boolean = false
 ): void {
   const root = document.documentElement;
 
